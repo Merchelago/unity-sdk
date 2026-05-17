@@ -25,6 +25,9 @@ mergeInto(LibraryManager.library, {
 
   // Идемпотентная установка слушателя message. Вызывается из C# при инициализации
   // WebGL-канала. Безопасно вызывать несколько раз.
+  // ВАЖНО: __deps обязателен — иначе Emscripten dead-strip'ает $vhrSdkBridge,
+  // и в рантайме будет ReferenceError: vhrSdkBridge is not defined.
+  VhrSdk_Init__deps: ['$vhrSdkBridge'],
   VhrSdk_Init: function () {
     if (vhrSdkBridge.listenerBound) {
       return;
@@ -52,6 +55,7 @@ mergeInto(LibraryManager.library, {
 
   // Возвращает последний полученный токен (или пустую строку). Строку
   // выделяем в куче Unity по стандартному паттерну Unity 6.
+  VhrSdk_GetLatestToken__deps: ['$vhrSdkBridge'],
   VhrSdk_GetLatestToken: function () {
     var s = vhrSdkBridge.latestToken || "";
     var size = lengthBytesUTF8(s) + 1;
@@ -63,6 +67,7 @@ mergeInto(LibraryManager.library, {
   // Просит родительскую страницу обновить токен и прислать свежий.
   // Постим во все разрешённые origin (прод + дев); неподходящий просто
   // отбросит сообщение по targetOrigin.
+  VhrSdk_RequestToken__deps: ['$vhrSdkBridge'],
   VhrSdk_RequestToken: function () {
     try {
       if (window.parent && window.parent !== window) {

@@ -3,6 +3,16 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
+## [1.0.3] - 2026-05-17
+
+### Исправлено
+- **Критично (WebGL halt):** `VhrSdkBridge.jslib` — добавлены
+  `*__deps: ['$vhrSdkBridge']` к `VhrSdk_Init`/`VhrSdk_GetLatestToken`/
+  `VhrSdk_RequestToken`. Без `__deps` Emscripten dead-strip'ал объект
+  `$vhrSdkBridge`, и в рантайме падало
+  `ReferenceError: vhrSdkBridge is not defined` в `_VhrSdk_Init`
+  (игра halt'илась на старте).
+
 ## [1.0.2] - 2026-05-17
 
 ### Исправлено
@@ -64,6 +74,7 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
+[1.0.3]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.3
 [1.0.2]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.2
 [1.0.1]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.0
