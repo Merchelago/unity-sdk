@@ -47,4 +47,4 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
-[1.0.0]: https://github.com/merchelago/vhrgames-unity-sdk/releases/tag/v1.0.0
+[1.0.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.0

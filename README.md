@@ -122,13 +122,13 @@ Scopes: com.cysharp.r3
 `Package Manager ▸ + ▸ Add package from git URL…`:
 
 ```
-https://github.com/merchelago/vhrgames-unity-sdk.git
+https://github.com/Merchelago/unity-sdk.git#v1.0.0
 ```
 
 или добавьте в `Packages/manifest.json`:
 
 ```json
-"ru.vhrgames.sdk": "https://github.com/merchelago/vhrgames-unity-sdk.git"
+"ru.vhrgames.sdk": "https://github.com/Merchelago/unity-sdk.git#v1.0.0"
 ```
 
 ---
