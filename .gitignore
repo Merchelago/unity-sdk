@@ -1,0 +1,5 @@
+# OS / editor junk — пакет Unity-UPM коммитим целиком, прочее не нужно
+.DS_Store
+Thumbs.db
+*.tmp
+*~

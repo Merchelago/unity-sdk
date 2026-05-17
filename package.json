@@ -1,0 +1,44 @@
+{
+  "name": "ru.vhrgames.sdk",
+  "version": "1.0.0",
+  "displayName": "VHR Games SDK",
+  "description": "Mandatory VHR Games SDK for Unity 6 WebGL titles. Provides economy, leaderboard, server-binding and session services that talk to the VHR bridge backend, plus a build marker handshake (vhr-sdk.json) that the backend validates on upload. Builds without this SDK are rejected on confirm-upload.",
+  "unity": "6000.0",
+  "documentationUrl": "https://github.com/merchelago/vhrgames-unity-sdk",
+  "changelogUrl": "https://github.com/merchelago/vhrgames-unity-sdk/blob/main/CHANGELOG.md",
+  "licensesUrl": "https://github.com/merchelago/vhrgames-unity-sdk/blob/main/LICENSE.md",
+  "keywords": [
+    "vhr",
+    "vhrgames",
+    "sdk",
+    "economy",
+    "leaderboard",
+    "webgl"
+  ],
+  "author": {
+    "name": "VHR Games",
+    "url": "https://vhrgames.ru"
+  },
+  "dependencies": {
+    "com.cysharp.r3": "1.2.9",
+    "jp.hadashikick.vcontainer": "1.16.0"
+  },
+  "scopedRegistries": [
+    {
+      "name": "OpenUPM",
+      "url": "https://package.openupm.com",
+      "scopes": [
+        "com.cysharp.r3",
+        "jp.hadashikick.vcontainer"
+      ]
+    }
+  ],
+  "samples": [
+    {
+      "displayName": "Basic Economy Sample",
+      "description": "Minimal MonoBehaviour showing init, balance fetch and coin grant.",
+      "path": "Samples~/Basic"
+    }
+  ],
+  "_vhr_install_note": "R3 and VContainer are NOT bundled. Add the OpenUPM scoped registry (https://package.openupm.com) with scopes com.cysharp.r3 and jp.hadashikick.vcontainer, then install 'R3' (com.cysharp.r3) and 'VContainer' (jp.hadashikick.vcontainer) via Package Manager. R3 additionally requires the NuGet 'System.Reactive' / 'R3' core DLLs via NuGetForUnity or the unitypackage from the R3 repo. See README.md > Installation."
+}
