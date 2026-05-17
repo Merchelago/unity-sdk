@@ -3,7 +3,17 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.1] - 2026-05-17
+
+### Исправлено
+- Сборка в Unity 6: добавлен `using UnityEngine;` в `VhrSdk.cs`
+  (`Awaitable` — `UnityEngine.Awaitable`, ошибка CS0246).
+- `VhrSdkEntryPoint` переведён с `IAsyncStartable` (требует UniTask) на
+  `IStartable` — fire-and-forget init через `Awaitable` + try/catch, без
+  зависимости от UniTask. Устраняет каскадную ошибку резолва
+  `VhrGames.Sdk.Editor` (Burst/Mono.Cecil).
+- В репозиторий добавлены Unity `.meta`-файлы для всех ассетов/папок
+  пакета (git-UPM пакет immutable — Unity их сам не генерирует).
 
 ### Добавлено
 - **Жизненный цикл JWT (~15 мин).** WebGL-плагин
@@ -47,4 +57,5 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
+[1.0.1]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.0

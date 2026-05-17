@@ -1,3 +1,5 @@
+using System;
+using System.Threading;
 using UnityEngine;
 using VContainer;
 using VContainer.Unity;
@@ -85,7 +87,7 @@ namespace VhrGames.Sdk
     /// VContainer entry point that drives SDK initialization at startup so DI
     /// consumers don't call <c>InitializeAsync</c> by hand.
     /// </summary>
-    public sealed class VhrSdkEntryPoint : IAsyncStartable
+    public sealed class VhrSdkEntryPoint : IStartable
     {
         private readonly VhrSdkOptions _options;
         private readonly VhrApiClient _api;
@@ -101,10 +103,26 @@ namespace VhrGames.Sdk
             _log = log;
         }
 
-        /// <summary>Runs the shared init routine and binds the static facade for hybrid use.</summary>
-        public async Awaitable StartAsync(System.Threading.CancellationToken ct)
+        /// <summary>
+        /// Runs the shared init routine and binds the static facade for hybrid
+        /// use. IStartable is synchronous (no UniTask dependency); we kick off
+        /// the async init fire-and-forget and never let it crash startup.
+        /// </summary>
+        public void Start()
         {
-            await VhrSdk.InitializeCoreAsync(_options, _api, _session, _log, ct);
+            _ = InitAsync();
+        }
+
+        private async Awaitable InitAsync()
+        {
+            try
+            {
+                await VhrSdk.InitializeCoreAsync(_options, _api, _session, _log, CancellationToken.None);
+            }
+            catch (Exception e)
+            {
+                _log?.Error("VHR SDK init failed: " + e.Message);
+            }
         }
     }
 }

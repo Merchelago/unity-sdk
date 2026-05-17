@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using R3;
+using UnityEngine; // UnityEngine.Awaitable (Unity 6+)
 
 namespace VhrGames.Sdk
 {
