@@ -3,6 +3,13 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
+## [1.0.2] - 2026-05-17
+
+### Исправлено
+- `VhrSdk.SdkVersion` синхронизирован с версией пакета (был зашит `1.0.0`,
+  из-за чего build-marker `vhr-sdk.json` писал устаревшую версию).
+  Теперь константа == `package.json` version.
+
 ## [1.0.1] - 2026-05-17
 
 ### Исправлено
@@ -57,5 +64,6 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
+[1.0.2]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.2
 [1.0.1]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.0
