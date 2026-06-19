@@ -104,9 +104,11 @@ namespace VhrGames.Sdk
             try
             {
                 var m = await _api.SendAsync<VhrMatch>(
-                    "POST", Url($"servers/games/{Uri.EscapeDataString(gid)}/match"), ct: ct);
-                if (m == null) return new VhrMatch { ok = false, code = "no_server", message = "Серверы не настроены." };
-                m.ok = true;
+                    "POST", Url($"servers/games/{Uri.EscapeDataString(gid)}/match"),
+                    allowNotImplemented: true, ct: ct);
+                // null = 501 (эндпоинт ещё не задеплоен) либо пустое тело.
+                if (m == null) return new VhrMatch { ok = false, code = "no_server", message = "Серверы недоступны." };
+                // ok по умолчанию true; если сервер прислал ok=false телом — не трогаем.
                 return m;
             }
             catch (VhrSdkException ex)

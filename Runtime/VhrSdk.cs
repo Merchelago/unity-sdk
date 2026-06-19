@@ -20,7 +20,7 @@ namespace VhrGames.Sdk
     public static class VhrSdk
     {
         /// <summary>SDK semantic version. Mirrored into the build marker and sent as <c>X-Vhr-Sdk-Version</c>.</summary>
-        public const string SdkVersion = "1.1.0";
+        public const string SdkVersion = "1.1.1";
 
         private static VhrSession _session;
 
