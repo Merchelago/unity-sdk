@@ -35,6 +35,9 @@ namespace VhrGames.Sdk
         [Tooltip("Servers base URL. Leave default for production.")]
         [SerializeField] private string serversBaseUrl = "https://api.vhrweb.ru/servers";
 
+        [Tooltip("Games (UnityGamesMS) base URL — турниры и пр. Leave default for production.")]
+        [SerializeField] private string gamesBaseUrl = "https://api.vhrweb.ru/games";
+
         [Tooltip("Ping the bridge on initialize and reflect it in the connection state.")]
         [SerializeField] private bool pingOnInitialize = true;
 
@@ -58,6 +61,7 @@ namespace VhrGames.Sdk
             InternalApiKey = internalApiKey,
             BridgeBaseUrl = bridgeBaseUrl,
             ServersBaseUrl = serversBaseUrl,
+            GamesBaseUrl = gamesBaseUrl,
             PingOnInitialize = pingOnInitialize,
             VerboseLogging = verboseLogging
             // TokenProvider не задаём: дефолт (WebGL access_token) подставит Validate().
@@ -78,6 +82,7 @@ namespace VhrGames.Sdk
             builder.Register<IVhrEconomy, VhrEconomyService>(Lifetime.Singleton);
             builder.Register<IVhrLeaderboard, VhrLeaderboardService>(Lifetime.Singleton);
             builder.Register<IVhrServers, VhrServersService>(Lifetime.Singleton);
+            builder.Register<IVhrTournaments, VhrTournamentsService>(Lifetime.Singleton);
 
             builder.RegisterEntryPoint<VhrSdkEntryPoint>();
         }

@@ -148,6 +148,76 @@ namespace VhrGames.Sdk
         public string status;
     }
 
+    /// <summary>
+    /// Подобранный игровой сервер для подключения (matchmaking). Адрес —
+    /// по домену/uuid (<see cref="host"/>), а не сырому IP; <see cref="connectUri"/>
+    /// уже включает протокол (udp/tcp). Если мест нет и квота исчерпана — сервер
+    /// вернёт 409 (<see cref="code"/>=<c>"no_capacity"</c>), что SDK маппит в
+    /// результат с <see cref="ok"/>=false.
+    /// </summary>
+    [Serializable]
+    public sealed class VhrMatch
+    {
+        /// <summary>True, если сервер подобран и готов к подключению.</summary>
+        public bool ok = true;
+        /// <summary>Id инстанса сервера.</summary>
+        public string instanceId;
+        /// <summary>Хост подключения (домен/uuid, не сырой IP).</summary>
+        public string host;
+        /// <summary>Порт.</summary>
+        public int port;
+        /// <summary>Транспорт: <c>"udp"</c> | <c>"tcp"</c>.</summary>
+        public string protocol;
+        /// <summary>Готовая строка подключения, напр. <c>udp://abc.servers.vhrgames.ru:34521</c>.</summary>
+        public string connectUri;
+        /// <summary>Вместимость сервера (слотов).</summary>
+        public int slots;
+        /// <summary>Текущее число игроков на сервере.</summary>
+        public int players;
+        /// <summary>Машиночитаемый код при отказе (напр. <c>"no_capacity"</c>).</summary>
+        public string code;
+        /// <summary>Человекочитаемое сообщение при отказе.</summary>
+        public string message;
+    }
+
+    /// <summary>Результат репорта рекламного события (<see cref="IVhrEconomy.ReportAdAsync"/>).</summary>
+    [Serializable]
+    public sealed class VhrAdResult
+    {
+        /// <summary>Принято сервером.</summary>
+        public bool accepted;
+        /// <summary>Начисленная выручка (в монетах) — считает сервер.</summary>
+        public long revenue;
+    }
+
+    /// <summary>Турнир платформы.</summary>
+    [Serializable]
+    public sealed class VhrTournament
+    {
+        public string id;
+        public string title;
+        public string description;
+        public string gameId;
+        public string startAt;
+        public string endAt;
+        public int prizePoolCoins;
+        public string bannerColor;
+        /// <summary><c>"upcoming"</c> | <c>"active"</c> | <c>"ended"</c> | <c>"finished"</c>.</summary>
+        public string status;
+        public int participants;
+    }
+
+    /// <summary>Строка таблицы результатов турнира.</summary>
+    [Serializable]
+    public sealed class VhrTournamentStanding
+    {
+        public int rank;
+        public string userId;
+        public string displayName;
+        public long score;
+        public int prizeCoins;
+    }
+
     /// <summary>Generic transport-level result of an HTTP call made through <see cref="IVhrHttp"/>.</summary>
     public readonly struct VhrHttpResponse
     {

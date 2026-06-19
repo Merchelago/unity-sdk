@@ -20,7 +20,7 @@ namespace VhrGames.Sdk
     public static class VhrSdk
     {
         /// <summary>SDK semantic version. Mirrored into the build marker and sent as <c>X-Vhr-Sdk-Version</c>.</summary>
-        public const string SdkVersion = "1.0.3";
+        public const string SdkVersion = "1.1.0";
 
         private static VhrSession _session;
 
@@ -35,6 +35,9 @@ namespace VhrGames.Sdk
 
         /// <summary>Servers service. Null until initialized.</summary>
         public static IVhrServers Servers { get; private set; }
+
+        /// <summary>Tournaments service. Null until initialized.</summary>
+        public static IVhrTournaments Tournaments { get; private set; }
 
         /// <summary>Session / connection-state holder. Null until initialized.</summary>
         public static IVhrSession Session => _session;
@@ -88,6 +91,7 @@ namespace VhrGames.Sdk
             Economy = new VhrEconomyService(api, options);
             Leaderboard = new VhrLeaderboardService(api, options, log);
             Servers = new VhrServersService(api, options);
+            Tournaments = new VhrTournamentsService(api, options);
 
             log.Info($"Initializing VHR SDK v{SdkVersion} for game '{options.GameId}'.");
             session.SetState(VhrConnectionState.Connecting);
@@ -126,6 +130,7 @@ namespace VhrGames.Sdk
             Economy = null;
             Leaderboard = null;
             Servers = null;
+            Tournaments = null;
             IsInitialized = false;
         }
     }

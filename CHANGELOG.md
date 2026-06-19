@@ -3,6 +3,25 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-06-20
+
+### Добавлено
+- **Матчмейкинг серверов** — `IVhrServers.MatchAsync(gameId?)`: подбирает игровой
+  сервер для подключения (свободный или поднимает новый в пределах квоты).
+  Подключение по **домену/uuid** (не сырому IP) и **UDP/TCP** — результат
+  `VhrMatch` несёт готовый `connectUri` (напр. `udp://abc.servers.vhrgames.ru:34521`),
+  `protocol`, слоты/игроков. При исчерпании квоты `ok=false`, `code="no_capacity"`.
+- **Репорт игроков** — `IVhrServers.ReportPlayersAsync(instanceId, count)` для
+  выделенных серверов (server-to-server, требует `InternalApiKey`); при заполнении
+  без свободной квоты платформа уведомляет разработчика.
+- **Реклама** — `IVhrEconomy.ReportAdAsync(type)`: репорт показа/клика/награды;
+  доход считает сервер (анти-накрутка), доля начисляется разработчику игры.
+- **Турниры** — новый сервис `IVhrTournaments`: `ListAsync(status)`,
+  `GetStandingsAsync(id)`, `JoinAsync(id)`, `SubmitScoreAsync(id, score)`. База —
+  `VhrSdkOptions.GamesBaseUrl` (по умолчанию `https://api.vhrweb.ru/games`).
+- `VhrApiClient.SendRawAsync` — сырое тело ответа (для эндпоинтов с JSON-массивом
+  верхнего уровня, который JsonUtility не парсит напрямую).
+
 ## [1.0.3] - 2026-05-17
 
 ### Исправлено

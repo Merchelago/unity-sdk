@@ -55,20 +55,44 @@ namespace VhrGames.Sdk
             bool allowNotImplemented = false,
             CancellationToken ct = default)
         {
+            var raw = await SendRawAsync(method, absoluteUrl, body, allowNotImplemented, ct);
+            if (raw == null || typeof(TResponse) == typeof(VhrVoid))
+                return default;
+
+            try
+            {
+                return JsonUtility.FromJson<TResponse>(raw);
+            }
+            catch (Exception ex)
+            {
+                throw new VhrSdkException("deserialize_error",
+                    $"Could not parse response from {absoluteUrl}: {ex.Message}. Body={raw}", 0, ex);
+            }
+        }
+
+        /// <summary>
+        /// Как <see cref="SendAsync{TResponse}"/>, но возвращает СЫРОЕ тело ответа
+        /// (или <c>null</c> на 501 при <paramref name="allowNotImplemented"/> и на
+        /// пустом теле). Нужен для эндпоинтов, отдающих JSON-массив верхнего
+        /// уровня, который <see cref="JsonUtility"/> не парсит напрямую — вызывающий
+        /// оборачивает тело в <c>{"items":[...]}</c> и парсит конкретной обёрткой.
+        /// </summary>
+        public async Task<string> SendRawAsync(
+            string method,
+            string absoluteUrl,
+            object body = null,
+            bool allowNotImplemented = false,
+            CancellationToken ct = default)
+        {
             string json = body == null ? null : JsonUtility.ToJson(body);
 
-            // Токен, использованный для этой попытки (для детекции "новый ли").
             var headers = BuildHeaders();
             headers.TryGetValue("Authorization", out var usedAuth);
 
             var resp = await _http.SendAsync(
                 method, absoluteUrl, json, headers, _options.RequestTimeoutSeconds, ct);
 
-            // Жизненный цикл JWT: токен живёт ~15 мин, сессии длиннее. На 401 от
-            // моста просим родительскую страницу (vhrgames.ru) прислать свежий
-            // токен через postMessage, ждём НОВЫЙ (отличный от использованного)
-            // и повторяем запрос РОВНО один раз. Вне WebGL postMessage нет —
-            // просто перечитываем TokenProvider (вдруг хост уже обновил).
+            // Жизненный цикл JWT: на 401 просим свежий токен и повторяем один раз.
             if (resp.StatusCode == 401)
             {
                 var refreshed = await TryRefreshTokenAsync(usedAuth, ct);
@@ -81,7 +105,7 @@ namespace VhrGames.Sdk
             }
 
             if (allowNotImplemented && resp.StatusCode == 501)
-                return default;
+                return null;
 
             if (!resp.IsSuccess)
             {
@@ -91,19 +115,7 @@ namespace VhrGames.Sdk
                     resp.StatusCode);
             }
 
-            if (string.IsNullOrWhiteSpace(resp.Body) || typeof(TResponse) == typeof(VhrVoid))
-                return default;
-
-            try
-            {
-                return JsonUtility.FromJson<TResponse>(resp.Body);
-            }
-            catch (Exception ex)
-            {
-                throw new VhrSdkException("deserialize_error",
-                    $"Could not parse response from {absoluteUrl}: {ex.Message}. Body={resp.Body}",
-                    resp.StatusCode, ex);
-            }
+            return string.IsNullOrWhiteSpace(resp.Body) ? null : resp.Body;
         }
 
         /// <summary>Builds the standard header set, evaluating the lazy token provider.</summary>

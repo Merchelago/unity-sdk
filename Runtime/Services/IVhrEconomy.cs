@@ -98,6 +98,15 @@ namespace VhrGames.Sdk
         Task<VhrEconomyResult> PurchaseAsync(
             string userId, string itemId, int quantity = 1,
             string externalId = null, CancellationToken ct = default);
+
+        /// <summary>
+        /// <c>POST /api/ad</c> — репорт рекламного события из игры (показ/клик/
+        /// награда). Тип по умолчанию <c>"impression"</c>. Доход за показ считает
+        /// СЕРВЕР по настройке платформы (анти-накрутка: клиент сумму не передаёт),
+        /// и доля начисляется разработчику игры. <c>X-Vhr-Game-Id</c> уходит
+        /// автоматически. Возвращает принятие + начисленную выручку.
+        /// </summary>
+        Task<VhrAdResult> ReportAdAsync(string type = "impression", CancellationToken ct = default);
     }
 
     /// <summary>HTTP implementation of <see cref="IVhrEconomy"/>.</summary>
@@ -183,6 +192,15 @@ namespace VhrGames.Sdk
             return res;
         }
 
+        /// <inheritdoc />
+        public async Task<VhrAdResult> ReportAdAsync(string type = "impression", CancellationToken ct = default)
+        {
+            var req = new AdReportRequest { type = string.IsNullOrWhiteSpace(type) ? "impression" : type };
+            var res = await _api.SendAsync<VhrAdResult>(
+                "POST", Url("ad"), req, allowNotImplemented: true, ct: ct);
+            return res ?? new VhrAdResult { accepted = false, revenue = 0 };
+        }
+
         private void Emit(string userId, VhrEconomyResult res, long delta, string reason)
         {
             if (res != null && res.success)
@@ -205,5 +223,7 @@ namespace VhrGames.Sdk
 
         [Serializable] private sealed class PurchaseRequest
         { public string userId; public string itemId; public int quantity; public string externalId; }
+
+        [Serializable] private sealed class AdReportRequest { public string type; }
     }
 }

@@ -32,6 +32,26 @@ namespace VhrGames.Sdk
         /// </summary>
         Task<VhrServerBinding> RequestInstanceAsync(
             string bindingId, CancellationToken ct = default);
+
+        /// <summary>
+        /// <c>POST /api/servers/games/{gameId}/match</c> — подобрать игровой сервер
+        /// для подключения (matchmaking). Возвращает свободный сервер или поднимает
+        /// новый по требованию (в пределах квоты). Адрес — по домену/uuid
+        /// (см. <see cref="VhrMatch.connectUri"/>), не сырому IP. Если мест нет и
+        /// квота исчерпана — <see cref="VhrMatch.ok"/>=false,
+        /// <see cref="VhrMatch.code"/>=<c>"no_capacity"</c>.
+        /// </summary>
+        /// <param name="gameId">Игра; по умолчанию — <see cref="VhrSdkOptions.GameId"/>.</param>
+        Task<VhrMatch> MatchAsync(string gameId = null, CancellationToken ct = default);
+
+        /// <summary>
+        /// <c>POST /api/servers/instances/{instanceId}/players</c> — выделенный
+        /// игровой сервер репортит текущее число игроков. Server-to-server: требует
+        /// <see cref="VhrSdkOptions.InternalApiKey"/> (в клиентских сборках не
+        /// задаётся). При заполнении без свободной квоты платформа уведомляет
+        /// разработчика. Возвращает <c>true</c> при успешном приёме.
+        /// </summary>
+        Task<bool> ReportPlayersAsync(string instanceId, int count, CancellationToken ct = default);
     }
 
     /// <summary>HTTP implementation of <see cref="IVhrServers"/> (noop-aware).</summary>
@@ -77,6 +97,40 @@ namespace VhrGames.Sdk
             return b ?? Noop(_options.GameId);
         }
 
+        /// <inheritdoc />
+        public async Task<VhrMatch> MatchAsync(string gameId = null, CancellationToken ct = default)
+        {
+            var gid = string.IsNullOrEmpty(gameId) ? _options.GameId : gameId;
+            try
+            {
+                var m = await _api.SendAsync<VhrMatch>(
+                    "POST", Url($"servers/games/{Uri.EscapeDataString(gid)}/match"), ct: ct);
+                if (m == null) return new VhrMatch { ok = false, code = "no_server", message = "Серверы не настроены." };
+                m.ok = true;
+                return m;
+            }
+            catch (VhrSdkException ex)
+            {
+                // 409 — нет свободных мест и квота исчерпана (масштабирование).
+                return new VhrMatch
+                {
+                    ok = false,
+                    code = ex.HttpStatus == 409 ? "no_capacity" : (ex.Code ?? "error"),
+                    message = ex.Message,
+                };
+            }
+        }
+
+        /// <inheritdoc />
+        public async Task<bool> ReportPlayersAsync(string instanceId, int count, CancellationToken ct = default)
+        {
+            var req = new PlayersReport { count = count < 0 ? 0 : count };
+            var res = await _api.SendAsync<PlayersAccepted>(
+                "POST", Url($"servers/instances/{Uri.EscapeDataString(instanceId)}/players"),
+                req, allowNotImplemented: true, ct: ct);
+            return res?.accepted ?? false;
+        }
+
         private static VhrServerBinding Noop(string gameId) => new()
         {
             bindingId = "noop", gameId = gameId, endpoint = string.Empty, status = "noop"
@@ -85,5 +139,7 @@ namespace VhrGames.Sdk
         [Serializable] private sealed class BindRequest { public string gameId; public string region; }
         [Serializable] private sealed class InstanceRequest { public string bindingId; }
         [Serializable] private sealed class BindingList { public VhrServerBinding[] items; }
+        [Serializable] private sealed class PlayersReport { public int count; }
+        [Serializable] private sealed class PlayersAccepted { public bool accepted; }
     }
 }

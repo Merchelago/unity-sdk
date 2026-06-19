@@ -38,6 +38,13 @@ namespace VhrGames.Sdk
         public string ServersBaseUrl = "https://api.vhrweb.ru/servers";
 
         /// <summary>
+        /// Base URL of the games API (UnityGamesMS) — турниры и пр. Default:
+        /// <c>https://api.vhrweb.ru/games</c>. Endpoints appended as
+        /// <c>{GamesBaseUrl}/api/...</c>.
+        /// </summary>
+        public string GamesBaseUrl = "https://api.vhrweb.ru/games";
+
+        /// <summary>
         /// The VHR game id this build belongs to. Required. Sent as the
         /// <c>X-Vhr-Game-Id</c> header and used in server-binding calls.
         /// </summary>
@@ -103,6 +110,9 @@ namespace VhrGames.Sdk
             // Normalize: strip trailing slashes so endpoint concatenation is predictable.
             BridgeBaseUrl = BridgeBaseUrl.TrimEnd('/');
             ServersBaseUrl = ServersBaseUrl.TrimEnd('/');
+            if (string.IsNullOrWhiteSpace(GamesBaseUrl))
+                GamesBaseUrl = "https://api.vhrweb.ru/games";
+            GamesBaseUrl = GamesBaseUrl.TrimEnd('/');
         }
 
         /// <summary>
