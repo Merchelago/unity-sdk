@@ -53,6 +53,20 @@ namespace VhrGames.Sdk
         public string RelayBaseUrl = "wss://servers.vhrweb.ru/ws";
 
         /// <summary>
+        /// Разрешить релею в <b>WebGL-сборке</b> авто-апгрейд транспорта с
+        /// WebSocket на <b>WebRTC DataChannel</b> (низколатентный, UDP-подобный
+        /// unreliable/unordered) после входа в комнату. По умолчанию <c>true</c>.
+        /// <para>
+        /// Полностью прозрачно для разработчика: тот же <c>Send</c>/<c>OnData</c> и
+        /// та же семантика комнаты. При сбое/таймауте апгрейда (нет WebRTC в
+        /// браузере, ICE не сошёлся за ~5 с и т.п.) релей остаётся на WebSocket.
+        /// На нативе/в редакторе опция игнорируется — там всегда WebSocket.
+        /// Текущий транспорт виден в <see cref="VhrRelay.Transport"/>.
+        /// </para>
+        /// </summary>
+        public bool PreferWebRtc = true;
+
+        /// <summary>
         /// The VHR game id this build belongs to. Required. Sent as the
         /// <c>X-Vhr-Game-Id</c> header and used in server-binding calls.
         /// </summary>

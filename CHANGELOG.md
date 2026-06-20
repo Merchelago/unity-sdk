@@ -3,6 +3,33 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
+## [1.5.0] - 2026-06-20
+
+### Добавлено
+- **Низколатентный WebRTC-апгрейд для WebGL (UDP-подобный DataChannel) с
+  авто-fallback на WebSocket.** В браузере релей (`VhrRelay`) после входа в
+  комнату прозрачно пытается поднять **WebRTC DataChannel** `"game"`
+  (unreliable/unordered — UDP-подобный, низкая задержка) и переключить на него
+  игровой трафик. При недоступности WebRTC, несхождении ICE или таймауте (~5 с)
+  релей **остаётся на WebSocket** — поведение 1.4 без изменений. Полностью
+  **прозрачно для разработчика**: тот же `Send`/`SendTo`/`OnData` и та же
+  семантика комнаты; код менять не нужно. Натив/редактор всегда на WebSocket.
+  - Новый WebGL-плагин `Runtime/Plugins/WebGL/VhrWebRtc.jslib` (браузерный
+    `RTCPeerConnection`, STUN `stun:stun.l.google.com:19302`) + C#-мост
+    `Runtime/Net/WebGLWebRtc.cs` (handle-таблица + `[MonoPInvokeCallback]`).
+  - Сигналинг (offer/answer/ICE) релеится по **той же** сокет-связи новым
+    фреймом `0x10` (`[0x10][utf8 JSON]`): релей создаёт offer и DataChannel,
+    клиент отвечает answer'ом и трикл-ICE'ит. Контроль (join/peer-события)
+    остаётся на WebSocket.
+  - Новая опция `VhrSdkOptions.PreferWebRtc` (по умолчанию `true`) — можно
+    выключить апгрейд и принудительно остаться на WebSocket.
+  - Новое диагностическое свойство `VhrRelay.Transport` (`"ws"` | `"webrtc"`).
+
+### Изменено
+- `Documentation~/Multiplayer.md`: отмечено, что в браузере релей сам
+  апгрейдится на WebRTC для низкой задержки, WebSocket — fallback; код менять
+  не нужно.
+
 ## [1.4.0] - 2026-06-20
 
 ### Добавлено
@@ -178,6 +205,7 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
+[1.5.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.5.0
 [1.4.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.2.0
