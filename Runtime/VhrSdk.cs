@@ -20,7 +20,7 @@ namespace VhrGames.Sdk
     public static class VhrSdk
     {
         /// <summary>SDK semantic version. Mirrored into the build marker and sent as <c>X-Vhr-Sdk-Version</c>.</summary>
-        public const string SdkVersion = "1.2.0";
+        public const string SdkVersion = "1.3.0";
 
         private static VhrSession _session;
 
@@ -117,6 +117,36 @@ namespace VhrGames.Sdk
             }
 
             IsInitialized = true;
+        }
+
+        /// <summary>
+        /// Создаёт <b>самодостаточный</b> экземпляр <see cref="IVhrServers"/> без
+        /// DI (VContainer) и без обращения к статическому фасаду / глобальному
+        /// <see cref="InitializeAsync"/>. Собирает ту же цепочку объектов, что и
+        /// обычная инициализация: <see cref="VhrUnityLog"/> →
+        /// <see cref="UnityWebRequestHttp"/> → <see cref="VhrApiClient"/> →
+        /// <see cref="VhrServersService"/>.
+        /// </summary>
+        /// <remarks>
+        /// Предназначен для выделенного сервера (см.
+        /// <c>VhrServerHost</c>): сервер репортит игроков server-to-server и не
+        /// нуждается ни в JWT игрока, ни в ping'е bridge. Передавайте
+        /// <see cref="VhrSdkOptions.InternalApiKey"/> (для сервера — из env
+        /// <c>VHR_INTERNAL_KEY</c>). Опции валидируются (<see cref="VhrSdkOptions.Validate"/>).
+        /// </remarks>
+        /// <param name="options">Конфигурация (минимум: <see cref="VhrSdkOptions.GameId"/>,
+        /// <see cref="VhrSdkOptions.ServersBaseUrl"/>; для репорта — <see cref="VhrSdkOptions.InternalApiKey"/>).</param>
+        /// <param name="http">Необязательная замена транспорта (тесты). По умолчанию <see cref="UnityWebRequestHttp"/>.</param>
+        /// <returns>Готовый к использованию <see cref="IVhrServers"/>.</returns>
+        public static IVhrServers CreateStandaloneServers(VhrSdkOptions options, IVhrHttp http = null)
+        {
+            if (options == null) throw new ArgumentNullException(nameof(options));
+            options.Validate();
+
+            var log = new VhrUnityLog(options.VerboseLogging);
+            http ??= new UnityWebRequestHttp(log);
+            var api = new VhrApiClient(http, options, log);
+            return new VhrServersService(api, options);
         }
 
         /// <summary>

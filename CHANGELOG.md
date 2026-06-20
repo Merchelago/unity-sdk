@@ -3,6 +3,36 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-06-20
+
+### Добавлено
+- **Zero-config выделенный сервер.** Платформа теперь сама инъектит в серверный
+  контейнер переменные окружения (`VHR_SERVER_PORT`, `VHR_INSTANCE_ID`,
+  `VHR_GAME_ID`, `VHR_INTERNAL_KEY`, `VHR_SERVERS_BASE_URL`) — разработчик ничего
+  не настраивает, **секретный ключ больше не зашивается в билд**.
+- **Drop-in компонент** `VhrServerHost` (`Runtime/Components/VhrServerHost.cs`):
+  перетащите на любой GameObject в серверной сцене — он сам, только в серверной
+  сборке (`VhrServer.IsServerBuild`), поднимает SDK из env и периодически
+  (по умолчанию раз в 15 с) репортит число игроков через `ReportPlayersAsync`.
+  Обновляйте `CurrentPlayers` или задайте `PlayerCountProvider`. Всё null-safe,
+  ошибки заглушаются (`Debug.LogWarning`).
+- **Однокнопочная сборка сервера** — меню
+  `VHR → Собрать серверный билд (Linux x86_64)` (`Editor/VhrBuildMenu.cs`):
+  переключает на Dedicated Server (Linux x86_64), собирает включённые сцены в
+  `Builds/Server/`, зипует в `Builds/vhr-server.zip` и возвращает платформу как
+  было.
+- **Хелперы env** в `VhrServer`: `InstanceId`, `GameId`, `InternalKey`,
+  `ServersBaseUrl`, `IsServerBuild` (никогда не кидают, разумные дефолты).
+- **Фабрика без DI** `VhrSdk.CreateStandaloneServers(options)` — собирает
+  самодостаточный `IVhrServers` той же цепочкой, что и обычная инициализация,
+  без VContainer и без глобального init.
+
+### Изменено
+- `Documentation~/Multiplayer.md` упрощён под новый поток: бросить `VhrServerHost`
+  на серверный GameObject → меню `VHR → Собрать серверный билд` → залить
+  `vhr-server.zip` через тумблер «Мультиплеер». Убраны ручные инструкции про
+  задание `InternalApiKey` в серверной сборке (теперь авто через env).
+
 ## [1.2.0] - 2026-06-20
 
 ### Добавлено
@@ -117,6 +147,7 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
+[1.3.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.2.0
 [1.0.3]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.3
 [1.0.2]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.2
