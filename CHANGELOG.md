@@ -3,6 +3,23 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-06-20
+
+### Добавлено
+- **Мультиплеер на выделенном сервере (Dedicated Server).** Платформа сама
+  собирает Docker-образ из билда Unity **Dedicated Server** (Linux x86_64) и
+  запускает контейнеры. Контейнер стартует как
+  `-batchmode -nographics -port <PORT>` и экспортит порт в env
+  `VHR_SERVER_PORT`. Модерация — один раз, дальше платформа билдит/гоняет образ.
+- **Хелпер порта** — `VhrServer.ListenPort` (+ `VhrServer.TryReadPort(out int)`):
+  читает `VHR_SERVER_PORT` из окружения, валидирует диапазон 1..65535, дефолт
+  `7777`. Сервер биндит транспорт на `0.0.0.0:<ListenPort>`.
+- **Документация** — `Documentation~/Multiplayer.md`: как собрать совместимый
+  выделенный сервер, загрузить zip (тумблер «Мультиплеер»), подключиться на
+  клиенте через `MatchAsync` → `VhrMatch.connectUri`, репортить игроков через
+  `ReportPlayersAsync` (server-to-server, `InternalApiKey` только в серверных
+  сборках), и про квоту серверов.
+
 ## [1.1.1] - 2026-06-20
 
 ### Исправлено
@@ -100,6 +117,7 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
+[1.2.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.2.0
 [1.0.3]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.3
 [1.0.2]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.2
 [1.0.1]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.1
