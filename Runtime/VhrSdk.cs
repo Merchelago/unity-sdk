@@ -20,11 +20,13 @@ namespace VhrGames.Sdk
     public static class VhrSdk
     {
         /// <summary>SDK semantic version. Mirrored into the build marker and sent as <c>X-Vhr-Sdk-Version</c>.</summary>
-        public const string SdkVersion = "1.5.0";
+        public const string SdkVersion = "1.6.0";
 
         private static VhrSession _session;
         private static VhrSdkOptions _options;
+        private static VhrApiClient _api;
         private static VhrRelay _relay;
+        private static VhrLobbyService _lobby;
 
         /// <summary>True once <see cref="InitializeAsync"/> (or the DI entry point) completed.</summary>
         public static bool IsInitialized { get; private set; }
@@ -58,6 +60,25 @@ namespace VhrGames.Sdk
         /// </code></example>
         public static VhrRelay Relay =>
             _relay ??= _options != null ? new VhrRelay(_options) : null;
+
+        /// <summary>
+        /// Лобби и матчмейкинг (быстрый матч с добивкой ботами, приватные лобби,
+        /// приглашение друзей, готовность, старт) — см. <see cref="IVhrLobby"/>.
+        /// Лениво создаётся поверх того же <see cref="Relay"/> (общий сокет,
+        /// управляющий фрейм <c>0x20</c>), опций и api-клиента. Требует
+        /// инициализированного SDK (иначе <c>null</c>). Один экземпляр на процесс;
+        /// обращайтесь с главного потока.
+        /// </summary>
+        /// <example><code>
+        /// var m = await VhrSdk.Lobby.QuickMatchAsync(
+        ///     new VhrMatchmakingOptions { maxPlayers = 4, fillBots = true });
+        /// SpawnPlayers(m.players);
+        /// SpawnBots(m.botSlots); // боты — на хосте; игра идёт через VhrSdk.Relay
+        /// </code></example>
+        public static IVhrLobby Lobby =>
+            _lobby ??= (_options != null && _api != null)
+                ? new VhrLobbyService(Relay, _options, _api)
+                : null;
 
         /// <summary>
         /// Connection-state stream (convenience passthrough to
@@ -100,6 +121,7 @@ namespace VhrGames.Sdk
         {
             _session = session;
             _options = options; // нужен для ленивого VhrSdk.Relay
+            _api = api;         // нужен для ленивого VhrSdk.Lobby (REST друзей)
 
             // Жизненный цикл JWT: на WebGL подписываемся на postMessage от
             // родителя (vhrgames.ru) как можно раньше, чтобы свежий токен был
@@ -174,8 +196,11 @@ namespace VhrGames.Sdk
         {
             (_session as IDisposable)?.Dispose();
             (Economy as IDisposable)?.Dispose();
+            _lobby?.Dispose();
+            _lobby = null;
             _relay?.Dispose();
             _relay = null;
+            _api = null;
             _options = null;
             _session = null;
             Economy = null;

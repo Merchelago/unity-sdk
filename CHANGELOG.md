@@ -3,6 +3,48 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
+## [1.6.0] - 2026-06-20
+
+### Добавлено
+- **Лобби и матчмейкинг — `VhrSdk.Lobby` (`IVhrLobby`).** Полный API подбора
+  игроков поверх того же релея: **быстрый матч** (собрать игроков, добить пустые
+  слоты ботами), **приватные лобби**, **приглашение друзей платформы**,
+  **готовность (ready-up)** и **старт**. Работает в **WebGL и нативе** —
+  ездит по **тому же WebSocket-соединению**, что и `VhrRelay`, новым
+  управляющим фреймом `0x20` (`[0x20][utf8 JSON]`); новых нативных зависимостей
+  нет.
+  - `QuickMatchAsync(opts)` — шлёт `quickmatch`, ждёт старта, возвращает
+    `VhrMatchInfo` и **сам входит** в relay-комнату матча (`"match-xxxx"`), так
+    что игра сразу шлёт данные через `VhrSdk.Relay`. По ходу — события
+    `OnLobbyUpdated`/`OnMatchStarting`.
+  - `CreateLobbyAsync(opts)` (приватное лобби с `code`), `JoinLobbyAsync(code)`,
+    `LeaveLobbyAsync()`, `CancelAsync()`, `SetReadyAsync(ready)`,
+    `InviteFriendAsync(userId)`, `KickAsync(userId)`,
+    `StartAsync()` (хост; ждёт старт + авто-вход в комнату).
+  - `GetFriendsAsync()` — REST `GET {GamesBaseUrl}/api/Friends` (UnityGamesMS,
+    `FriendsController`) → список друзей для приглашения.
+  - События: `OnLobbyUpdated`, `OnInviteReceived`, `OnMatchStarting`,
+    `OnMatchStarted`, `OnClosed`; свойства `CurrentLobby`, `IsHost`,
+    `SelfUserId`. Все события маршалятся на главный Unity-поток (как у `VhrRelay`).
+  - **Боты — на стороне игры.** SDK отдаёт `VhrMatchInfo.botSlots`/`botCount`;
+    спавнит ботов сама игра (хост — авторитет), трафик идёт через `VhrSdk.Relay`.
+  - Новые модели `Runtime/Models/VhrLobbyModels.cs`: `VhrLobby`,
+    `VhrLobbyMember`, `VhrLobbyInvite`, `VhrMatchInfo`, `VhrMatchPlayer`,
+    `VhrMatchmakingOptions`, `VhrLobbyOptions`, `VhrFriend`.
+- **Seam в `VhrRelay` для общего сокета.** Новый метод `SendControl(frame)`
+  (шлёт сырой фрейм по сокету релея), событие `OnControlFrame(type, payload)`
+  (фреймы, которые сам релей не обрабатывает — сегодня `0x20`), и
+  `JoinRoomRawAsync(roomId)` (вход в комнату по явному id — для входа в
+  `"match-xxxx"` на старте матча). Обработка релеем `0x83/0x84/0x85/0x81/0x10`
+  не изменилась.
+- **Аксессор** `VhrSdk.Lobby` — ленивый `VhrLobbyService` поверх общего
+  `VhrSdk.Relay`, опций и api-клиента.
+
+### Изменено
+- Новая документация `Documentation~/Lobby.md`: полный API лобби/матчмейкинга +
+  примеры (быстрый матч с ботами; приватное лобби + приглашение друзей). Ссылка
+  добавлена в `Documentation~/Multiplayer.md`.
+
 ## [1.5.0] - 2026-06-20
 
 ### Добавлено
@@ -205,6 +247,7 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
+[1.6.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.6.0
 [1.5.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.5.0
 [1.4.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.3.0

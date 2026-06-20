@@ -151,7 +151,7 @@ namespace VhrGames.Sdk.Editor
                 Directory.CreateDirectory(zipDir);
 
             ZipFile.CreateFromDirectory(
-                OutputDir, ZipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+                OutputDir, ZipPath, System.IO.Compression.CompressionLevel.Optimal, includeBaseDirectory: false);
 
             return Path.GetFullPath(ZipPath);
         }

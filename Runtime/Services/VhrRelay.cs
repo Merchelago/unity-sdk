@@ -49,6 +49,12 @@ namespace VhrGames.Sdk
         // не носит этот байт — он идёт по DataChannel в исходном бинарном виде.
         private const byte CSignal = 0x10;
         private const byte SSignal = 0x10;
+        // 0x20 = управляющий канал лобби/матчмейкинга поверх той же сокет-связи:
+        // [0x20][utf8 JSON]. Двунаправленный. VhrRelay сам этот тип НЕ обрабатывает —
+        // он просто пробрасывает его наружу через OnControlFrame (для VhrLobby),
+        // а исходящие лобби-фреймы шлёт через SendControl. Игровой трафик релея
+        // (0x83/0x84/0x85/0x81/0x10) при этом не затрагивается.
+        private const byte CControl = 0x20;
 
         private readonly VhrSdkOptions _options;
         private readonly Func<IVhrSocket> _socketFactory;
@@ -90,6 +96,14 @@ namespace VhrGames.Sdk
 
         /// <summary>Соединение закрылось. Аргумент — причина (может быть <c>null</c>).</summary>
         public event Action<string> OnClosed;
+
+        /// <summary>
+        /// Управляющий фрейм, который сам <see cref="VhrRelay"/> НЕ обрабатывает
+        /// (на сегодня — тип <c>0x20</c>, канал лобби/матчмейкинга). Аргументы —
+        /// тип фрейма (первый байт) и его payload (без типа). На главном потоке.
+        /// Используется <see cref="VhrLobby"/>, который ездит по тому же сокету.
+        /// </summary>
+        public event Action<byte, byte[]> OnControlFrame;
 
         /// <summary>
         /// Создаёт relay-клиент. Вызывайте с главного потока (для корректного
@@ -272,6 +286,54 @@ namespace VhrGames.Sdk
             catch { /* ignore */ }
         }
 
+        /// <summary>
+        /// Шлёт <b>сырой</b> фрейм по тому же сокету, что и релей (несущая для
+        /// контроля). Используется <see cref="VhrLobby"/> для отправки
+        /// управляющих <c>0x20</c>-фреймов лобби/матчмейкинга. No-op, если сокет
+        /// закрыт. Игровой WebRTC-апгрейд этот путь не затрагивает — контроль
+        /// всегда идёт по WebSocket.
+        /// </summary>
+        /// <param name="frame">Готовый фрейм с байтом типа в начале.</param>
+        public void SendControl(byte[] frame)
+        {
+            if (frame == null || frame.Length == 0) return;
+            var sock = _socket;
+            if (sock == null || !sock.IsOpen) return;
+            sock.Send(frame);
+        }
+
+        /// <summary>
+        /// Входит в комнату по <b>явному</b> идентификатору <paramref name="roomId"/>
+        /// (как есть, без неймспейса <c>"{GameId}:..."</c>). Нужно, чтобы лобби
+        /// после старта матча завело всех участников в общую relay-комнату
+        /// (напр. <c>"match-xxxx"</c>) и игра сразу могла слать данные через
+        /// <see cref="Send"/>/<see cref="OnData"/>.
+        /// <para>
+        /// Требует уже открытого сокета (после <see cref="ConnectAsync"/>).
+        /// Завершается по подтверждению входа (<c>0x81 joined</c>); при этом
+        /// <see cref="OnJoined"/> срабатывает, а <see cref="SelfId"/> обновляется.
+        /// </para>
+        /// </summary>
+        /// <param name="roomId">Точный id комнаты у релея.</param>
+        /// <param name="ct">Токен отмены.</param>
+        public async Task JoinRoomRawAsync(string roomId, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(roomId))
+                throw new VhrSdkException("config_invalid", "roomId обязателен для JoinRoomRawAsync.");
+            var sock = _socket;
+            if (sock == null || !sock.IsOpen)
+                throw new VhrSdkException("relay_closed", "Сокет релея не открыт — сначала ConnectAsync.");
+
+            _room = roomId.Trim();
+            SelfId = 0;
+            _joinedTcs = new TaskCompletionSource<bool>();
+            if (ct.CanBeCanceled)
+                ct.Register(() => _joinedTcs?.TrySetCanceled());
+
+            SendJoin(_room);
+            await _joinedTcs.Task.ConfigureAwait(false);
+        }
+
         private void SendJoin(string room)
         {
             var roomBytes = Encoding.UTF8.GetBytes(room);
@@ -353,6 +415,21 @@ namespace VhrGames.Sdk
                     if (msg.Length < 2) return;
                     var json = Encoding.UTF8.GetString(msg, 1, msg.Length - 1);
                     Post(() => RouteSignal(json));
+                    break;
+                }
+                case CControl:
+                {
+                    // Управляющий канал лобби/матчмейкинга ([0x20][utf8 JSON]).
+                    // VhrRelay сам его не интерпретирует — пробрасывает payload
+                    // (без байта типа) наружу на главном потоке. Подписчик —
+                    // VhrLobby. Пустой payload допустим (передаём пустой массив).
+                    int ctrlLen = msg.Length - 1;
+                    var ctrlPayload = new byte[ctrlLen];
+                    if (ctrlLen > 0) Buffer.BlockCopy(msg, 1, ctrlPayload, 0, ctrlLen);
+                    Post(() =>
+                    {
+                        try { OnControlFrame?.Invoke(type, ctrlPayload); } catch { /* подписчик */ }
+                    });
                     break;
                 }
                 default:
