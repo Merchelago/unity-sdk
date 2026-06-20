@@ -45,6 +45,14 @@ namespace VhrGames.Sdk
         public string GamesBaseUrl = "https://api.vhrweb.ru/games";
 
         /// <summary>
+        /// WebSocket-адрес платформенного <b>релея</b> для простого мультиплеера
+        /// без серверной сборки (см. <see cref="VhrRelay"/>). По умолчанию
+        /// <c>wss://servers.vhrweb.ru/ws</c>. Должен начинаться с <c>ws://</c> или
+        /// <c>wss://</c>; для WebGL-страницы по HTTPS используйте <c>wss://</c>.
+        /// </summary>
+        public string RelayBaseUrl = "wss://servers.vhrweb.ru/ws";
+
+        /// <summary>
         /// The VHR game id this build belongs to. Required. Sent as the
         /// <c>X-Vhr-Game-Id</c> header and used in server-binding calls.
         /// </summary>
@@ -113,6 +121,13 @@ namespace VhrGames.Sdk
             if (string.IsNullOrWhiteSpace(GamesBaseUrl))
                 GamesBaseUrl = "https://api.vhrweb.ru/games";
             GamesBaseUrl = GamesBaseUrl.TrimEnd('/');
+
+            // Релей опционален; пустое значение восстанавливаем дефолтом, чтобы
+            // VhrSdk.Relay всегда был рабочим. URL не триммим по '/' — путь
+            // (/ws) значим для WebSocket-эндпоинта.
+            if (string.IsNullOrWhiteSpace(RelayBaseUrl))
+                RelayBaseUrl = "wss://servers.vhrweb.ru/ws";
+            RelayBaseUrl = RelayBaseUrl.Trim();
         }
 
         /// <summary>

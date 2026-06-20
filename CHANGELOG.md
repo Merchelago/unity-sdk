@@ -3,6 +3,37 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] - 2026-06-20
+
+### Добавлено
+- **Простой мультиплеер через релей — без серверной сборки.** Новый клиент
+  `VhrRelay` (`Runtime/Services/VhrRelay.cs`): разработчик собирает **только
+  клиент**, подключается к общему платформенному relay
+  (`wss://servers.vhrweb.ru/ws`, поле `VhrSdkOptions.RelayBaseUrl`), входит в
+  комнату `"{GameId}:{lobbyCode}"` (lobbyCode по умолчанию `"main"`) и
+  пересылает байты другим игрокам. API: `ConnectAsync(lobbyCode)`,
+  `Send(bytes)` (broadcast), `SendTo(peerId, bytes)`, события
+  `OnData`, `OnJoined`, `OnPeerJoined`, `OnPeerLeft`, `OnClosed`, `CloseAsync()`.
+  Бинарный протокол little-endian (`0x01/0x02/0x04` → relay,
+  `0x81/0x83/0x84/0x85` ← relay).
+- **WebGL-совместимый WebSocket-транспорт** за одним интерфейсом `IVhrSocket`
+  (`Runtime/Net/`): `NativeVhrSocket` (натив/редактор, `ClientWebSocket`) и
+  `WebGLVhrSocket` (WebGL, браузерный `WebSocket` через новый плагин
+  `Runtime/Plugins/WebGL/VhrWebSocket.jslib`). `ClientWebSocket` в WebGL не
+  работает — поэтому два бэкенда. События нативного сокета маршалятся на главный
+  Unity-поток.
+- **Drop-in компонент** `VhrRelayBootstrap`
+  (`Runtime/Components/VhrRelayBootstrap.cs`): на `Start` подключается к
+  `VhrSdk.Relay`, входит в лобби (поле `lobbyCode`) и пробрасывает события релея
+  как UnityEvents (для инспектора) и C#-события. Null-safe.
+- **Аксессор** `VhrSdk.Relay` — ленивый общий `VhrRelay` из опций инициализации.
+- **Опция** `VhrSdkOptions.RelayBaseUrl` (по умолчанию `wss://servers.vhrweb.ru/ws`).
+
+### Изменено
+- `Documentation~/Multiplayer.md`: добавлен раздел «Простой мультиплеер (релей,
+  без серверной сборки)» как основной путь; раздел про выделенный сервер помечен
+  как «продвинутый».
+
 ## [1.3.0] - 2026-06-20
 
 ### Добавлено
@@ -147,6 +178,7 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
+[1.4.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.2.0
 [1.0.3]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.0.3

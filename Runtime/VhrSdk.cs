@@ -20,9 +20,11 @@ namespace VhrGames.Sdk
     public static class VhrSdk
     {
         /// <summary>SDK semantic version. Mirrored into the build marker and sent as <c>X-Vhr-Sdk-Version</c>.</summary>
-        public const string SdkVersion = "1.3.0";
+        public const string SdkVersion = "1.4.0";
 
         private static VhrSession _session;
+        private static VhrSdkOptions _options;
+        private static VhrRelay _relay;
 
         /// <summary>True once <see cref="InitializeAsync"/> (or the DI entry point) completed.</summary>
         public static bool IsInitialized { get; private set; }
@@ -41,6 +43,21 @@ namespace VhrGames.Sdk
 
         /// <summary>Session / connection-state holder. Null until initialized.</summary>
         public static IVhrSession Session => _session;
+
+        /// <summary>
+        /// Клиент <b>платформенного релея</b> для простого мультиплеера без
+        /// серверной сборки (см. <see cref="VhrRelay"/>). Лениво создаётся при
+        /// первом обращении из опций, переданных в <see cref="InitializeAsync"/>
+        /// (нужен инициализированный SDK — иначе <c>null</c>). Один общий
+        /// экземпляр на процесс; обращайтесь с главного потока.
+        /// </summary>
+        /// <example><code>
+        /// await VhrSdk.Relay.ConnectAsync("lobby1");
+        /// VhrSdk.Relay.OnData += (sender, bytes) => { /* ... */ };
+        /// VhrSdk.Relay.Send(bytes);
+        /// </code></example>
+        public static VhrRelay Relay =>
+            _relay ??= _options != null ? new VhrRelay(_options) : null;
 
         /// <summary>
         /// Connection-state stream (convenience passthrough to
@@ -82,6 +99,7 @@ namespace VhrGames.Sdk
             CancellationToken ct)
         {
             _session = session;
+            _options = options; // нужен для ленивого VhrSdk.Relay
 
             // Жизненный цикл JWT: на WebGL подписываемся на postMessage от
             // родителя (vhrgames.ru) как можно раньше, чтобы свежий токен был
@@ -156,6 +174,9 @@ namespace VhrGames.Sdk
         {
             (_session as IDisposable)?.Dispose();
             (Economy as IDisposable)?.Dispose();
+            _relay?.Dispose();
+            _relay = null;
+            _options = null;
             _session = null;
             Economy = null;
             Leaderboard = null;
