@@ -151,7 +151,7 @@ namespace VhrGames.Sdk
             _room = $"{_options.GameId}:{code}";
 
             SelfId = 0;
-            _joinedTcs = new TaskCompletionSource<bool>();
+            _joinedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             _socket = _socketFactory();
             _socket.OnMessage += HandleMessageRaw;
@@ -326,7 +326,7 @@ namespace VhrGames.Sdk
 
             _room = roomId.Trim();
             SelfId = 0;
-            _joinedTcs = new TaskCompletionSource<bool>();
+            _joinedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             if (ct.CanBeCanceled)
                 ct.Register(() => _joinedTcs?.TrySetCanceled());
 
@@ -449,6 +449,11 @@ namespace VhrGames.Sdk
             {
                 try { rtc.Dispose(); } catch { /* ignore */ }
             }
+
+            // После закрытия мы больше не "подключены": IsConnected = (socket open
+            // && SelfId!=0) должен стать false ОДНОЗНАЧНО, чтобы следующий вызов
+            // сделал полный реконнект + повторный auth (иначе кадр уйдёт в никуда).
+            SelfId = 0;
 
             // Если закрылись до join — разблокируем ConnectAsync ошибкой.
             _joinedTcs?.TrySetException(

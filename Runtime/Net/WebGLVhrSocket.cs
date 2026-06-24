@@ -63,7 +63,9 @@ namespace VhrGames.Sdk
             if (string.IsNullOrEmpty(url))
                 throw new ArgumentException("url is required", nameof(url));
 
-            _connectTcs = new TaskCompletionSource<bool>();
+            // WebGL: продолжения асинхронно (в очередь тика), иначе onopen-колбэк
+            // выполнит await-продолжение синхронно и инвертирует порядок отправки/приёма.
+            _connectTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             _id = VhrWs_Connect(url, OnOpenStatic, OnMessageStatic, OnCloseStatic);
             if (_id == 0)

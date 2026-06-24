@@ -117,7 +117,7 @@ namespace VhrGames.Sdk
             if (_id != 0)
                 return IsOpen;
 
-            _openTcs = new TaskCompletionSource<bool>();
+            _openTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             _id = VhrRtc_Start(OnOpenStatic, OnDataStatic, OnAnswerStatic, OnIceStatic, OnErrorStatic);
             if (_id == 0)

@@ -3,6 +3,24 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
+## [1.7.1] - 2026-06-24
+
+### Исправлено (КРИТ: лобби висло на WebGL)
+- **Релей/лобби: продолжения TaskCompletionSource теперь `RunContinuationsAsynchronously`.**
+  На WebGL (нет тредпула) await-продолжения выполнялись СИНХРОННО внутри JS-колбэка
+  сокета, инвертируя порядок «отправил → жду → ответ позже»: ответный управляющий
+  кадр (`ev:lobby`/`ev:error`/join `0x81`) приходил вложенно в стек отправки, раньше
+  подписки/создания TCS, и терялся → `CreateLobbyAsync`/`QuickMatchAsync`/`StartAsync`
+  висели вечно («Создание лобби…»). В редакторе (нативный сокет, фоновые потоки) баг
+  не воспроизводился. Применено ко всем TCS: `VhrRelay._joinedTcs`, `VhrLobby._lobbyTcs`/
+  `_startTcs`, `WebGLVhrSocket._connectTcs`, `WebGLWebRtc._openTcs`.
+- **`VhrLobbyService.EnsureReadyAsync`: подписка на `OnControlFrame`/`OnClosed` ДО `ConnectAsync`**
+  (а не после) — чтобы кадр, пришедший во время/сразу после подключения, не потерялся.
+- **Жёсткий таймаут (15с) на ожидание ответа лобби** (`AwaitReplyAsync`) — SDK больше не
+  висит вечно даже при потере кадра, а отдаёт `VhrSdkException("lobby_timeout")`.
+- **`VhrRelay`: сброс `SelfId=0` при закрытии сокета** — `IsConnected` однозначно становится
+  false, следующий вызов делает полный реконнект + повторный auth.
+
 ## [1.7.0] - 2026-06-23
 
 ### Добавлено

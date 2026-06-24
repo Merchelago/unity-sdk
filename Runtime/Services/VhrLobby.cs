@@ -67,7 +67,7 @@ namespace VhrGames.Sdk
             opts ??= new VhrMatchmakingOptions();
             await EnsureReadyAsync(ct).ConfigureAwait(false);
 
-            _startTcs = new TaskCompletionSource<VhrMatchInfo>();
+            _startTcs = NewReplyTcs<VhrMatchInfo>();
             if (ct.CanBeCanceled) ct.Register(() => _startTcs?.TrySetCanceled());
 
             var sb = new StringBuilder();
@@ -81,7 +81,7 @@ namespace VhrGames.Sdk
             sb.Append('}');
             SendOp(sb.ToString());
 
-            var info = await _startTcs.Task.ConfigureAwait(false);
+            var info = await AwaitReplyAsync(_startTcs).ConfigureAwait(false);
             await JoinMatchRoomAsync(info, ct).ConfigureAwait(false);
             return info;
         }
@@ -92,7 +92,7 @@ namespace VhrGames.Sdk
             opts ??= new VhrLobbyOptions();
             await EnsureReadyAsync(CancellationToken.None).ConfigureAwait(false);
 
-            _lobbyTcs = new TaskCompletionSource<VhrLobby>();
+            _lobbyTcs = NewReplyTcs<VhrLobby>();
 
             var sb = new StringBuilder();
             sb.Append("{\"op\":\"create\"");
@@ -105,7 +105,7 @@ namespace VhrGames.Sdk
             sb.Append('}');
             SendOp(sb.ToString());
 
-            return await _lobbyTcs.Task.ConfigureAwait(false);
+            return await AwaitReplyAsync(_lobbyTcs).ConfigureAwait(false);
         }
 
         /// <inheritdoc />
@@ -115,7 +115,7 @@ namespace VhrGames.Sdk
                 throw new VhrSdkException("config_invalid", "code обязателен для JoinLobbyAsync.");
             await EnsureReadyAsync(CancellationToken.None).ConfigureAwait(false);
 
-            _lobbyTcs = new TaskCompletionSource<VhrLobby>();
+            _lobbyTcs = NewReplyTcs<VhrLobby>();
 
             var sb = new StringBuilder();
             sb.Append("{\"op\":\"join\"");
@@ -123,7 +123,7 @@ namespace VhrGames.Sdk
             sb.Append('}');
             SendOp(sb.ToString());
 
-            return await _lobbyTcs.Task.ConfigureAwait(false);
+            return await AwaitReplyAsync(_lobbyTcs).ConfigureAwait(false);
         }
 
         /// <inheritdoc />
@@ -182,9 +182,9 @@ namespace VhrGames.Sdk
         /// <inheritdoc />
         public async Task<VhrMatchInfo> StartAsync()
         {
-            _startTcs = new TaskCompletionSource<VhrMatchInfo>();
+            _startTcs = NewReplyTcs<VhrMatchInfo>();
             SendOp("{\"op\":\"start\"}");
-            var info = await _startTcs.Task.ConfigureAwait(false);
+            var info = await AwaitReplyAsync(_startTcs).ConfigureAwait(false);
             await JoinMatchRoomAsync(info, CancellationToken.None).ConfigureAwait(false);
             return info;
         }
@@ -215,21 +215,44 @@ namespace VhrGames.Sdk
 
         // ---- инфраструктура: подписка, auth, отправка ----
 
+        // ВАЖНО (WebGL): по умолчанию TCS-продолжения выполняются СИНХРОННО прямо
+        // внутри JS-колбэка сокета (нет тредпула, ConfigureAwait(false) тред не
+        // переключает) → ответный 0x20-кадр прилетает вложенно в стек отправки,
+        // раньше подписки/создания TCS, и теряется → лобби висит вечно.
+        // RunContinuationsAsynchronously ставит продолжение в очередь Unity-тика —
+        // порядок «отправил → жду → ответ ПОЗЖЕ» сохраняется, как на нативе.
+        private static TaskCompletionSource<T> NewReplyTcs<T>() =>
+            new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Ждёт ответ сервера с жёстким таймаутом — SDK не висит вечно, даже если кадр потерян.</summary>
+        private async Task<T> AwaitReplyAsync<T>(TaskCompletionSource<T> tcs)
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            using (cts.Token.Register(() => tcs.TrySetException(
+                new VhrSdkException("lobby_timeout", "Сервер лобби не ответил вовремя. Попробуйте ещё раз."))))
+            {
+                return await tcs.Task.ConfigureAwait(false);
+            }
+        }
+
         /// <summary>
         /// Гарантирует, что сокет релея открыт, мы подписаны на <c>0x20</c> и
         /// отправили <c>{"op":"auth"}</c> с JWT игрока ровно один раз.
         /// </summary>
         private async Task EnsureReadyAsync(CancellationToken ct)
         {
-            if (!_relay.IsConnected)
-                await _relay.ConnectAsync("main", ct).ConfigureAwait(false);
-
+            // Подписка ДО ConnectAsync: на WebGL ответный 0x20-кадр (или join 0x81)
+            // может прийти синхронно (вложенно в onmessage-колбэк) сразу после/во
+            // время подключения — если подписаться ПОСЛЕ, кадр потеряется.
             if (!_subscribed)
             {
                 _relay.OnControlFrame += HandleControlFrame;
                 _relay.OnClosed += HandleRelayClosed;
                 _subscribed = true;
             }
+
+            if (!_relay.IsConnected)
+                await _relay.ConnectAsync("main", ct).ConfigureAwait(false);
 
             if (!_authSent)
             {
