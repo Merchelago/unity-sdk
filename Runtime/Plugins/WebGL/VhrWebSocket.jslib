@@ -120,7 +120,14 @@ var VhrWebSocketLib = {
   VhrWs_IsOpen: function (id) {
     var sock = vhrWs.sockets[id];
     return (sock && sock.ws && sock.ws.readyState === 1) ? 1 : 0;
-  }
+  },
+
+  // Освобождение буфера кучи (malloc'нутого в onMessage / строк WebRTC). Раньше
+  // C# импортировал libc 'free' напрямую — под IL2CPP/WebGL это объявляло
+  // free(intptr_t) и конфликтовало с free(void*) из emscripten. Своя обёртка над
+  // _free решает конфликт. Общая для WebSocket и WebRTC (импортируется как VhrFree).
+  VhrFree__deps: ['free'],
+  VhrFree: function (ptr) { _free(ptr); }
 };
 
 mergeInto(LibraryManager.library, VhrWebSocketLib);

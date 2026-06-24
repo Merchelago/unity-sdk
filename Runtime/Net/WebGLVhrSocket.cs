@@ -161,8 +161,10 @@ namespace VhrGames.Sdk
             try { OnClose?.Invoke(reason); } catch { /* обработчик игры */ }
         }
 
-        // free() из Emscripten-кучи. Имя экспортируется рантаймом Unity WebGL.
-        [DllImport("__Internal", EntryPoint = "free")]
+        // Освобождение буфера кучи. Через обёртку VhrFree (jslib) над _free, иначе
+        // EntryPoint="free" под IL2CPP/WebGL объявляет free(intptr_t) и конфликтует
+        // с free(void*) из emscripten (ошибка сборки).
+        [DllImport("__Internal", EntryPoint = "VhrFree")]
         private static extern void VhrFree(IntPtr ptr);
 #else
         // Вне WebGL используется NativeVhrSocket; здесь — затычка, чтобы тип

@@ -3,6 +3,30 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
+## [1.7.0] - 2026-06-23
+
+### Добавлено
+- **Профиль игрока — `VhrSdk.Profile` (`IVhrProfile`).** `GetMeAsync()` (текущий игрок:
+  id/email/userName/roles), `ResolveAsync(userIds)` и `ResolveNamesAsync(userIds)` —
+  **батч-резолв ников по userId** через `AuthMS /api/Auth/users/resolve` (до 100 за запрос,
+  с авто-чанкингом). Основа для отображения имён друзей/лидербордов/авторов.
+- **Друзья — `VhrSdk.Friends` (`IVhrFriends`).** Полный API поверх `UnityGamesMS/FriendsController`:
+  список друзей, заявки (входящие/исходящие), отправить/принять/отклонить/отозвать,
+  статус пары, удалить, приглашение в игру.
+- **Прогресс — `VhrSdk.PlayerStats` (`IVhrPlayerStats`).** `GetMyStatsAsync()`: уровень, XP,
+  коины, ранг (tier/subTier/label/...), косметика, winRate, серия, подписка.
+- **Достижения — `VhrSdk.Achievements` (`IVhrAchievements`).** Платформенные/игровые ачивки,
+  свои/чужие разблокировки, `my-games`.
+- **Сессии — `VhrSdk.GameSessions` (`IVhrGameSessions`).** `StartAsync`/`EndAsync`/`HeartbeatAsync`
+  (трекинг времени/исхода — питает XP/статы).
+- **Базовые URL:** `VhrSdkOptions.AuthBaseUrl` (`/auth`) и `NotificationsBaseUrl` (`/notifications`).
+
+### Изменено
+- **`IVhrLeaderboard` переведён на реальный бэкенд** `UnityGamesMS /api/Leaderboard`
+  (`GetGlobalAsync`/`GetForGameAsync`/`SubmitScoreAsync(gameId, score)`); убран устаревший
+  501-seam на `BridgeBaseUrl/api/leaderboard`. (Старые `SubmitAsync(userId,score)`/`GetTopAsync`
+  заменены — вызовов в проектах не было.)
+
 ## [1.6.1] - 2026-06-20
 
 ### Добавлено

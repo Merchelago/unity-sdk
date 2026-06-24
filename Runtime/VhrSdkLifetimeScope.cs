@@ -83,6 +83,11 @@ namespace VhrGames.Sdk
             builder.Register<IVhrLeaderboard, VhrLeaderboardService>(Lifetime.Singleton);
             builder.Register<IVhrServers, VhrServersService>(Lifetime.Singleton);
             builder.Register<IVhrTournaments, VhrTournamentsService>(Lifetime.Singleton);
+            builder.Register<IVhrProfile, VhrProfileService>(Lifetime.Singleton);
+            builder.Register<IVhrFriends, VhrFriendsService>(Lifetime.Singleton);
+            builder.Register<IVhrPlayerStats, VhrPlayerStatsService>(Lifetime.Singleton);
+            builder.Register<IVhrAchievements, VhrAchievementsService>(Lifetime.Singleton);
+            builder.Register<IVhrGameSessions, VhrGameSessionsService>(Lifetime.Singleton);
 
             builder.RegisterEntryPoint<VhrSdkEntryPoint>();
         }

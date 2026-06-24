@@ -20,7 +20,7 @@ namespace VhrGames.Sdk
     public static class VhrSdk
     {
         /// <summary>SDK semantic version. Mirrored into the build marker and sent as <c>X-Vhr-Sdk-Version</c>.</summary>
-        public const string SdkVersion = "1.6.1";
+        public const string SdkVersion = "1.7.0";
 
         private static VhrSession _session;
         private static VhrSdkOptions _options;
@@ -42,6 +42,21 @@ namespace VhrGames.Sdk
 
         /// <summary>Tournaments service. Null until initialized.</summary>
         public static IVhrTournaments Tournaments { get; private set; }
+
+        /// <summary>Профиль игрока + батч-резолв ников по userId (см. <see cref="IVhrProfile"/>). Null until initialized.</summary>
+        public static IVhrProfile Profile { get; private set; }
+
+        /// <summary>Друзья: список, заявки, статус пары, приглашения (см. <see cref="IVhrFriends"/>). Null until initialized.</summary>
+        public static IVhrFriends Friends { get; private set; }
+
+        /// <summary>Прогресс игрока: уровень, XP, коины, ранг, косметика (см. <see cref="IVhrPlayerStats"/>). Null until initialized.</summary>
+        public static IVhrPlayerStats PlayerStats { get; private set; }
+
+        /// <summary>Достижения игрока/игр/платформы (см. <see cref="IVhrAchievements"/>). Null until initialized.</summary>
+        public static IVhrAchievements Achievements { get; private set; }
+
+        /// <summary>Игровые сессии: старт/энд/heartbeat (см. <see cref="IVhrGameSessions"/>). Null until initialized.</summary>
+        public static IVhrGameSessions GameSessions { get; private set; }
 
         /// <summary>Session / connection-state holder. Null until initialized.</summary>
         public static IVhrSession Session => _session;
@@ -132,6 +147,11 @@ namespace VhrGames.Sdk
             Leaderboard = new VhrLeaderboardService(api, options, log);
             Servers = new VhrServersService(api, options);
             Tournaments = new VhrTournamentsService(api, options);
+            Profile = new VhrProfileService(api, options, log);
+            Friends = new VhrFriendsService(api, options, log);
+            PlayerStats = new VhrPlayerStatsService(api, options, log);
+            Achievements = new VhrAchievementsService(api, options, log);
+            GameSessions = new VhrGameSessionsService(api, options, log);
 
             log.Info($"Initializing VHR SDK v{SdkVersion} for game '{options.GameId}'.");
             session.SetState(VhrConnectionState.Connecting);
@@ -207,6 +227,11 @@ namespace VhrGames.Sdk
             Leaderboard = null;
             Servers = null;
             Tournaments = null;
+            Profile = null;
+            Friends = null;
+            PlayerStats = null;
+            Achievements = null;
+            GameSessions = null;
             IsInitialized = false;
         }
     }

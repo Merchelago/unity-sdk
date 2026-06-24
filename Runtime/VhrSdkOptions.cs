@@ -38,11 +38,24 @@ namespace VhrGames.Sdk
         public string ServersBaseUrl = "https://api.vhrweb.ru/servers";
 
         /// <summary>
-        /// Base URL of the games API (UnityGamesMS) — турниры и пр. Default:
-        /// <c>https://api.vhrweb.ru/games</c>. Endpoints appended as
-        /// <c>{GamesBaseUrl}/api/...</c>.
+        /// Base URL of the games API (UnityGamesMS) — игры/друзья/статы/лидерборды/
+        /// ачивки/магазин и пр. Default: <c>https://api.vhrweb.ru/games</c>.
+        /// Endpoints appended as <c>{GamesBaseUrl}/api/...</c>.
         /// </summary>
         public string GamesBaseUrl = "https://api.vhrweb.ru/games";
+
+        /// <summary>
+        /// Base URL of the auth API (AuthMS) — профиль игрока (<c>/api/Auth/me</c>)
+        /// и батч-резолв ников (<c>/api/Auth/users/resolve</c>). Default:
+        /// <c>https://api.vhrweb.ru/auth</c>. Endpoints appended as <c>{AuthBaseUrl}/api/...</c>.
+        /// </summary>
+        public string AuthBaseUrl = "https://api.vhrweb.ru/auth";
+
+        /// <summary>
+        /// Base URL of the notifications API (NotificationMS) — уведомления игрока
+        /// (<c>/api/Notifications/...</c>). Default: <c>https://api.vhrweb.ru/notifications</c>.
+        /// </summary>
+        public string NotificationsBaseUrl = "https://api.vhrweb.ru/notifications";
 
         /// <summary>
         /// WebSocket-адрес платформенного <b>релея</b> для простого мультиплеера
@@ -135,6 +148,14 @@ namespace VhrGames.Sdk
             if (string.IsNullOrWhiteSpace(GamesBaseUrl))
                 GamesBaseUrl = "https://api.vhrweb.ru/games";
             GamesBaseUrl = GamesBaseUrl.TrimEnd('/');
+
+            if (string.IsNullOrWhiteSpace(AuthBaseUrl))
+                AuthBaseUrl = "https://api.vhrweb.ru/auth";
+            AuthBaseUrl = AuthBaseUrl.TrimEnd('/');
+
+            if (string.IsNullOrWhiteSpace(NotificationsBaseUrl))
+                NotificationsBaseUrl = "https://api.vhrweb.ru/notifications";
+            NotificationsBaseUrl = NotificationsBaseUrl.TrimEnd('/');
 
             // Релей опционален; пустое значение восстанавливаем дефолтом, чтобы
             // VhrSdk.Relay всегда был рабочим. URL не триммим по '/' — путь

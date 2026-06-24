@@ -86,9 +86,9 @@ namespace VhrGames.Sdk
         [DllImport("__Internal")]
         private static extern void VhrRtc_Close(int id);
 
-        // free() из Emscripten-кучи (имя экспортирует рантайм Unity WebGL). Нужен
-        // для буферов данных (_malloc в jslib) и строк (allocStr в jslib).
-        [DllImport("__Internal", EntryPoint = "free")]
+        // Освобождение буфера/строк кучи. Через обёртку VhrFree (jslib) над _free —
+        // прямой EntryPoint="free" под IL2CPP/WebGL конфликтует с libc free(void*).
+        [DllImport("__Internal", EntryPoint = "VhrFree")]
         private static extern void VhrFree(IntPtr ptr);
 
         // handle -> экземпляр. Коллбеки статические, инстанс находим тут.
