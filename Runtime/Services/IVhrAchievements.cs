@@ -75,7 +75,7 @@ namespace VhrGames.Sdk
         /// <inheritdoc />
         public async Task<VhrAchievement[]> GetPlatformAsync(CancellationToken ct = default)
         {
-            return await GetArrayAsync(Url("platform"), ct).ConfigureAwait(false);
+            return await GetArrayAsync(Url("platform"), ct);
         }
 
         /// <inheritdoc />
@@ -83,13 +83,13 @@ namespace VhrGames.Sdk
         {
             if (string.IsNullOrWhiteSpace(gameId))
                 throw new VhrSdkException("config_invalid", "gameId обязателен для GetForGameAsync.");
-            return await GetArrayAsync(Url($"games/{gameId.Trim()}"), ct).ConfigureAwait(false);
+            return await GetArrayAsync(Url($"games/{gameId.Trim()}"), ct);
         }
 
         /// <inheritdoc />
         public async Task<VhrUserAchievement[]> GetMineAsync(CancellationToken ct = default)
         {
-            return await GetUserArrayAsync(Url("me"), ct).ConfigureAwait(false);
+            return await GetUserArrayAsync(Url("me"), ct);
         }
 
         /// <inheritdoc />
@@ -97,7 +97,7 @@ namespace VhrGames.Sdk
         {
             if (string.IsNullOrWhiteSpace(userId))
                 throw new VhrSdkException("config_invalid", "userId обязателен для GetForUserAsync.");
-            return await GetUserArrayAsync(Url($"users/{userId.Trim()}"), ct).ConfigureAwait(false);
+            return await GetUserArrayAsync(Url($"users/{userId.Trim()}"), ct);
         }
 
         /// <inheritdoc />
@@ -105,7 +105,7 @@ namespace VhrGames.Sdk
         {
             // Этот эндпоинт уже отдаёт {"items":[...]} — парсим обёрткой напрямую.
             var page = await _api.SendAsync<MyGamesEnvelope>(
-                "GET", Url("my-games"), allowNotImplemented: true, ct: ct).ConfigureAwait(false);
+                "GET", Url("my-games"), allowNotImplemented: true, ct: ct);
             var items = page?.items;
             if (items == null) return Array.Empty<VhrGameAchievements>();
             for (int i = 0; i < items.Length; i++)
@@ -120,7 +120,7 @@ namespace VhrGames.Sdk
         private async Task<VhrAchievement[]> GetArrayAsync(string url, CancellationToken ct)
         {
             var raw = await _api.SendRawAsync("GET", url, null, allowNotImplemented: true, ct: ct)
-                .ConfigureAwait(false);
+                ;
             if (string.IsNullOrWhiteSpace(raw)) return Array.Empty<VhrAchievement>();
 
             var wrapped = "{\"items\":" + raw + "}";
@@ -131,7 +131,7 @@ namespace VhrGames.Sdk
         private async Task<VhrUserAchievement[]> GetUserArrayAsync(string url, CancellationToken ct)
         {
             var raw = await _api.SendRawAsync("GET", url, null, allowNotImplemented: true, ct: ct)
-                .ConfigureAwait(false);
+                ;
             if (string.IsNullOrWhiteSpace(raw)) return Array.Empty<VhrUserAchievement>();
 
             var wrapped = "{\"items\":" + raw + "}";

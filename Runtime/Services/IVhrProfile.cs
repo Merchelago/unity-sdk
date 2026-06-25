@@ -89,7 +89,7 @@ namespace VhrGames.Sdk
 
             // Один запрос (типичный случай) — без лишних аллокаций списка.
             if (userIds.Length <= ResolveBatchSize)
-                return await ResolveBatchAsync(userIds, ct).ConfigureAwait(false);
+                return await ResolveBatchAsync(userIds, ct);
 
             // Бэкенд режет > 100 id (400 too_many_ids) — дробим на пачки и склеиваем.
             var all = new List<VhrUserRef>(userIds.Length);
@@ -99,7 +99,7 @@ namespace VhrGames.Sdk
                 var batch = new string[count];
                 Array.Copy(userIds, offset, batch, 0, count);
 
-                var part = await ResolveBatchAsync(batch, ct).ConfigureAwait(false);
+                var part = await ResolveBatchAsync(batch, ct);
                 if (part != null && part.Length > 0)
                     all.AddRange(part);
             }
@@ -110,7 +110,7 @@ namespace VhrGames.Sdk
         public async Task<Dictionary<string, string>> ResolveNamesAsync(string[] userIds, CancellationToken ct = default)
         {
             var map = new Dictionary<string, string>(StringComparer.Ordinal);
-            var refs = await ResolveAsync(userIds, ct).ConfigureAwait(false);
+            var refs = await ResolveAsync(userIds, ct);
             if (refs == null) return map;
 
             foreach (var r in refs)
@@ -129,7 +129,7 @@ namespace VhrGames.Sdk
         private async Task<VhrUserRef[]> ResolveBatchAsync(string[] batch, CancellationToken ct)
         {
             var req = new ResolveRequest { ids = batch };
-            var raw = await _api.SendRawAsync("POST", Url("users/resolve"), req, ct: ct).ConfigureAwait(false);
+            var raw = await _api.SendRawAsync("POST", Url("users/resolve"), req, ct: ct);
             if (string.IsNullOrWhiteSpace(raw))
                 return Array.Empty<VhrUserRef>();
 
