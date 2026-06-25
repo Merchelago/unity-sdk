@@ -52,6 +52,17 @@ namespace VhrGames.Sdk
         private static readonly Dictionary<int, WebGLVhrSocket> Instances =
             new Dictionary<int, WebGLVhrSocket>();
 
+        // КРИТ: держим делегаты-колбэки в СТАТИЧЕСКИХ полях. Если передавать
+        // method-group (OnOpenStatic) прямо в VhrWs_Connect, C# создаёт ВРЕМЕННЫЙ
+        // делегат, который GC собирает после возврата вызова → переданный в JS
+        // указатель становится висячим, и onopen/onmessage/onclose из JS НЕ доходят
+        // до C#: сокет «подключается» (релей видит /ws, шлёт 101), но ConnectAsync
+        // висит вечно, т.к. OnOpenStatic не вызывается. Корень, почему WebGL-релей
+        // не работал (в редакторе нативный сокет — там граблей нет).
+        private static readonly OpenCb s_onOpen = OnOpenStatic;
+        private static readonly MessageCb s_onMessage = OnMessageStatic;
+        private static readonly CloseCb s_onClose = OnCloseStatic;
+
         private int _id;
         private bool _closed;
         private TaskCompletionSource<bool> _connectTcs;
@@ -67,7 +78,7 @@ namespace VhrGames.Sdk
             // выполнит await-продолжение синхронно и инвертирует порядок отправки/приёма.
             _connectTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            _id = VhrWs_Connect(url, OnOpenStatic, OnMessageStatic, OnCloseStatic);
+            _id = VhrWs_Connect(url, s_onOpen, s_onMessage, s_onClose);
             if (_id == 0)
             {
                 _connectTcs.TrySetException(
