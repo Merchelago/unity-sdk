@@ -65,7 +65,7 @@ namespace VhrGames.Sdk
         public async Task<VhrMatchInfo> QuickMatchAsync(VhrMatchmakingOptions opts, CancellationToken ct = default)
         {
             opts ??= new VhrMatchmakingOptions();
-            await EnsureReadyAsync(ct).ConfigureAwait(false);
+            await EnsureReadyAsync(ct);
 
             _startTcs = NewReplyTcs<VhrMatchInfo>();
             if (ct.CanBeCanceled) ct.Register(() => _startTcs?.TrySetCanceled());
@@ -81,8 +81,8 @@ namespace VhrGames.Sdk
             sb.Append('}');
             SendOp(sb.ToString());
 
-            var info = await AwaitReplyAsync(_startTcs).ConfigureAwait(false);
-            await JoinMatchRoomAsync(info, ct).ConfigureAwait(false);
+            var info = await AwaitReplyAsync(_startTcs);
+            await JoinMatchRoomAsync(info, ct);
             return info;
         }
 
@@ -90,7 +90,7 @@ namespace VhrGames.Sdk
         public async Task<VhrLobby> CreateLobbyAsync(VhrLobbyOptions opts)
         {
             opts ??= new VhrLobbyOptions();
-            await EnsureReadyAsync(CancellationToken.None).ConfigureAwait(false);
+            await EnsureReadyAsync(CancellationToken.None);
 
             _lobbyTcs = NewReplyTcs<VhrLobby>();
 
@@ -105,7 +105,7 @@ namespace VhrGames.Sdk
             sb.Append('}');
             SendOp(sb.ToString());
 
-            return await AwaitReplyAsync(_lobbyTcs).ConfigureAwait(false);
+            return await AwaitReplyAsync(_lobbyTcs);
         }
 
         /// <inheritdoc />
@@ -113,7 +113,7 @@ namespace VhrGames.Sdk
         {
             if (string.IsNullOrWhiteSpace(code))
                 throw new VhrSdkException("config_invalid", "code обязателен для JoinLobbyAsync.");
-            await EnsureReadyAsync(CancellationToken.None).ConfigureAwait(false);
+            await EnsureReadyAsync(CancellationToken.None);
 
             _lobbyTcs = NewReplyTcs<VhrLobby>();
 
@@ -123,7 +123,7 @@ namespace VhrGames.Sdk
             sb.Append('}');
             SendOp(sb.ToString());
 
-            return await AwaitReplyAsync(_lobbyTcs).ConfigureAwait(false);
+            return await AwaitReplyAsync(_lobbyTcs);
         }
 
         /// <inheritdoc />
@@ -184,8 +184,8 @@ namespace VhrGames.Sdk
         {
             _startTcs = NewReplyTcs<VhrMatchInfo>();
             SendOp("{\"op\":\"start\"}");
-            var info = await AwaitReplyAsync(_startTcs).ConfigureAwait(false);
-            await JoinMatchRoomAsync(info, CancellationToken.None).ConfigureAwait(false);
+            var info = await AwaitReplyAsync(_startTcs);
+            await JoinMatchRoomAsync(info, CancellationToken.None);
             return info;
         }
 
@@ -221,6 +221,10 @@ namespace VhrGames.Sdk
         // раньше подписки/создания TCS, и теряется → лобби висит вечно.
         // RunContinuationsAsynchronously ставит продолжение в очередь Unity-тика —
         // порядок «отправил → жду → ответ ПОЗЖЕ» сохраняется, как на нативе.
+        // ⚠️ НЕ добавлять .ConfigureAwait(false) к await'ам этой цепочки! На WebGL это
+        // сбрасывает Unity-контекст синхронизации, и продолжение уходит в тредпул,
+        // которого на WebGL НЕТ → продолжение не выполняется НИКОГДА (connect/lobby
+        // виснут после onopen/ответа). Все await тут — с контекстом (по умолчанию).
         private static TaskCompletionSource<T> NewReplyTcs<T>() =>
             new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -231,7 +235,7 @@ namespace VhrGames.Sdk
             using (cts.Token.Register(() => tcs.TrySetException(
                 new VhrSdkException("lobby_timeout", "Сервер лобби не ответил вовремя. Попробуйте ещё раз."))))
             {
-                return await tcs.Task.ConfigureAwait(false);
+                return await tcs.Task;
             }
         }
 
@@ -252,7 +256,7 @@ namespace VhrGames.Sdk
             }
 
             if (!_relay.IsConnected)
-                await _relay.ConnectAsync("main", ct).ConfigureAwait(false);
+                await _relay.ConnectAsync("main", ct);
 
             if (!_authSent)
             {
@@ -262,7 +266,7 @@ namespace VhrGames.Sdk
                 // может не оказаться → auth уходит пустым, relay его отвергает: лобби
                 // висит, друзья не грузятся. AcquirePlayerTokenAsync просит токен у
                 // родителя и ждёт его появления, если провайдер вернул пусто.
-                var token = await AcquirePlayerTokenAsync(ct).ConfigureAwait(false);
+                var token = await AcquirePlayerTokenAsync(ct);
                 Debug.Log("[VHR Lobby] auth → " + (string.IsNullOrEmpty(token)
                     ? "ТОКЕН ОТСУТСТВУЕТ — войдите на платформе (relay-auth/друзья/лобби работать не будут)"
                     : (IsTokenStale(token)
@@ -347,7 +351,7 @@ namespace VhrGames.Sdk
         private async Task JoinMatchRoomAsync(VhrMatchInfo info, CancellationToken ct)
         {
             if (info == null || string.IsNullOrEmpty(info.roomId)) return;
-            try { await _relay.JoinRoomRawAsync(info.roomId, ct).ConfigureAwait(false); }
+            try { await _relay.JoinRoomRawAsync(info.roomId, ct); }
             catch { /* комната станет доступна при следующем входе; не валим матч */ }
         }
 

@@ -3,6 +3,19 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
+## [1.7.6] - 2026-06-25
+
+### Исправлено (КОРЕНЬ-2: await-продолжения не выполнялись на WebGL — `ConfigureAwait(false)`)
+- **Убран `.ConfigureAwait(false)` из всей relay/lobby async-цепочки** (`VhrRelay`, `VhrLobbyService`).
+  После фикса делегатов (v1.7.5) `onopen` стал доходить до C# (`[VHR WS] onopen` в логе), но
+  `VhrRelay.ConnectAsync` всё равно висел: `_connectTcs.TrySetResult` вызывался, а продолжение `await`
+  не запускалось. Причина — `RunContinuationsAsynchronously` + `ConfigureAwait(false)`: на WebGL нет
+  тредпула, а `ConfigureAwait(false)` сбрасывает Unity-`SynchronizationContext`, поэтому продолжение
+  планируется в несуществующий тредпул и НЕ выполняется никогда. Без `ConfigureAwait(false)` оно
+  постится в Unity-контекст и крутится на главном потоке (следующий тик) — порядок «отправил→жду→
+  ответ позже» сохраняется (за счёт `RunContinuationsAsynchronously`), без re-entrancy. Добавлен
+  комментарий-предохранитель в `NewReplyTcs`, чтобы `ConfigureAwait(false)` не вернули.
+
 ## [1.7.5] - 2026-06-25
 
 ### Исправлено (КОРЕНЬ: WebGL-релей никогда не подключался — висячие делегаты колбэков)

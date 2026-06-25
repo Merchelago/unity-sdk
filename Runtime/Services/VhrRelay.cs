@@ -166,7 +166,7 @@ namespace VhrGames.Sdk
                 new VhrSdkException("relay_timeout", "Релей не подтвердил вход за 10с (нет onopen или SJoined 0x81).")));
 
             UnityEngine.Debug.Log($"[VHR Relay] ConnectAsync → {baseUrl} (room={_room})");
-            await _socket.ConnectAsync(baseUrl.Trim(), connCts.Token).ConfigureAwait(false);
+            await _socket.ConnectAsync(baseUrl.Trim(), connCts.Token);
             UnityEngine.Debug.Log("[VHR Relay] сокет ОТКРЫТ → шлю join");
 
             // Шлём join сразу после открытия.
@@ -174,12 +174,12 @@ namespace VhrGames.Sdk
             UnityEngine.Debug.Log("[VHR Relay] join отправлен → жду 0x81 SJoined…");
 
             // Ждём подтверждения входа (0x81).
-            await _joinedTcs.Task.ConfigureAwait(false);
+            await _joinedTcs.Task;
             UnityEngine.Debug.Log($"[VHR Relay] JOINED self={SelfId} ✓");
 
             // Опциональный апгрейд на WebRTC (только WebGL). Прозрачно для игры:
             // тот же Send/OnData. При любом сбое/таймауте остаёмся на WebSocket.
-            await TryUpgradeToWebRtcAsync(ct).ConfigureAwait(false);
+            await TryUpgradeToWebRtcAsync(ct);
         }
 
         /// <summary>
@@ -213,7 +213,7 @@ namespace VhrGames.Sdk
 
                 // Ждём открытия канала или таймаута 5 c. Входящие offer/ice
                 // прилетают через HandleMessageRaw -> RouteSignal -> rtc.*.
-                bool ok = await rtc.StartAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
+                bool ok = await rtc.StartAsync(TimeSpan.FromSeconds(5), ct);
                 if (ok)
                 {
                     _webRtcActive = true; // с этого момента Send() идёт по каналу
@@ -291,7 +291,7 @@ namespace VhrGames.Sdk
         {
             var sock = _socket;
             if (sock == null) return;
-            try { await sock.CloseAsync().ConfigureAwait(false); }
+            try { await sock.CloseAsync(); }
             catch { /* ignore */ }
         }
 
@@ -340,7 +340,7 @@ namespace VhrGames.Sdk
                 ct.Register(() => _joinedTcs?.TrySetCanceled());
 
             SendJoin(_room);
-            await _joinedTcs.Task.ConfigureAwait(false);
+            await _joinedTcs.Task;
         }
 
         private void SendJoin(string room)
