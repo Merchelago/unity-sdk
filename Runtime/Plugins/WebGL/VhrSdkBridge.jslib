@@ -20,7 +20,20 @@ mergeInto(LibraryManager.library, {
   $vhrSdkBridge: {
     latestToken: "",
     listenerBound: false,
-    allowedOrigins: ["https://vhrgames.ru", "http://localhost:5173"]
+    // Разрешённые origin РОДИТЕЛЯ (страницы платформы), присылающего токен.
+    // event.origin у postMessage — это origin родителя (vhrgames.ru), НЕ iframe.
+    allowedOrigins: ["https://vhrgames.ru", "https://www.vhrgames.ru", "http://localhost:5173"],
+    // Принимаем токен с любого https-сабдомена vhrgames.ru (www. и пр.), плюс
+    // точные совпадения из списка и localhost для дев-режима. Возврат истории
+    // отклонённых origin'ов — в console.warn (см. слушатель), чтобы при смене
+    // домена платформы было видно, что добавить.
+    isAllowedOrigin: function (origin) {
+      if (!origin) return false;
+      if (vhrSdkBridge.allowedOrigins.indexOf(origin) !== -1) return true;
+      if (/^https:\/\/([a-z0-9-]+\.)*vhrgames\.ru$/i.test(origin)) return true;
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
+      return false;
+    }
   },
 
   // Идемпотентная установка слушателя message. Вызывается из C# при инициализации
@@ -36,16 +49,23 @@ mergeInto(LibraryManager.library, {
 
     try {
       window.addEventListener("message", function (event) {
-        // Принимаем сообщения СТРОГО с разрешённых origin родителя.
-        if (vhrSdkBridge.allowedOrigins.indexOf(event.origin) === -1) {
-          return;
-        }
         var data = event.data;
-        if (!data || typeof data !== "object") {
+        if (!data || typeof data !== "object" || data.type !== "vhr:sdk:token") {
+          return; // не наш канал — на странице много message-событий, молчим
+        }
+        // Это попытка прислать токен игрока — проверяем origin родителя.
+        if (!vhrSdkBridge.isAllowedOrigin(event.origin)) {
+          if (window.console && console.warn) {
+            console.warn("[VHR SDK] токен postMessage ОТКЛОНЁН с origin: " + event.origin +
+              " — если это страница платформы, добавьте origin в allowedOrigins (VhrSdkBridge.jslib).");
+          }
           return;
         }
-        if (data.type === "vhr:sdk:token" && typeof data.token === "string" && data.token.length > 0) {
+        if (typeof data.token === "string" && data.token.length > 0) {
           vhrSdkBridge.latestToken = data.token;
+          if (window.console && console.log) {
+            console.log("[VHR SDK] токен игрока получен от " + event.origin + " (len=" + data.token.length + ")");
+          }
         }
       });
     } catch (e) {
@@ -71,9 +91,10 @@ mergeInto(LibraryManager.library, {
   VhrSdk_RequestToken: function () {
     try {
       if (window.parent && window.parent !== window) {
-        for (var i = 0; i < vhrSdkBridge.allowedOrigins.length; i++) {
-          window.parent.postMessage({ type: "vhr:sdk:token-request" }, vhrSdkBridge.allowedOrigins[i]);
-        }
+        // Запрос токена секрета НЕ содержит — шлём с targetOrigin "*", чтобы
+        // родитель на любом домене (vhrgames.ru / www. / иной) гарантированно
+        // получил запрос и ответил токеном (его origin мы потом проверим в слушателе).
+        window.parent.postMessage({ type: "vhr:sdk:token-request" }, "*");
       }
     } catch (e) {
       // Кросс-доменные ограничения / нет родителя — деградируем тихо.

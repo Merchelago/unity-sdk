@@ -256,7 +256,16 @@ namespace VhrGames.Sdk
 
             if (!_authSent)
             {
-                var token = _options.TokenProvider?.Invoke();
+                // ВАЖНО: берём JWT игрока ДО отправки auth. На WebGL родитель шлёт
+                // токен через postMessage, и этот пост может ОПОЗДАТЬ (срабатывает на
+                // onLoad iframe — раньше, чем SDK навесил слушатель), а в URL токена
+                // может не оказаться → auth уходит пустым, relay его отвергает: лобби
+                // висит, друзья не грузятся. AcquirePlayerTokenAsync просит токен у
+                // родителя и ждёт его появления, если провайдер вернул пусто.
+                var token = await AcquirePlayerTokenAsync(ct).ConfigureAwait(false);
+                Debug.Log("[VHR Lobby] auth → " + (string.IsNullOrEmpty(token)
+                    ? "ТОКЕН ОТСУТСТВУЕТ — войдите на платформе (relay-auth/друзья/лобби работать не будут)"
+                    : "токен получен (len=" + token.Length + ")"));
                 var sb = new StringBuilder();
                 sb.Append("{\"op\":\"auth\"");
                 AppendStr(sb, "token", token ?? string.Empty);
@@ -264,6 +273,32 @@ namespace VhrGames.Sdk
                 SendOp(sb.ToString());
                 _authSent = true;
             }
+        }
+
+        /// <summary>
+        /// Берёт JWT игрока у провайдера. На WebGL токен может прийти от родителя
+        /// через postMessage с задержкой — если провайдер вернул пусто, просим
+        /// родителя прислать токен (<c>vhr:sdk:token-request</c>) и ждём появления
+        /// значения до ~2 c. Если токен есть сразу (URL <c>?access_token=</c> или уже
+        /// присланный postMessage) — возвращаем мгновенно, без ожидания.
+        /// </summary>
+        private async Task<string> AcquirePlayerTokenAsync(CancellationToken ct)
+        {
+            var token = _options.TokenProvider?.Invoke();
+            if (!string.IsNullOrEmpty(token)) return token;
+
+            // Пусто: просим родителя (страницу платформы) прислать свежий токен.
+            try { VhrWebGlTokenChannel.RequestRefresh(); } catch { /* нет родителя/не WebGL */ }
+
+            for (int i = 0; i < 8; i++) // ~2 c суммарно (8 × 0.25 c)
+            {
+                if (ct.IsCancellationRequested) break;
+                try { await Awaitable.WaitForSecondsAsync(0.25f, ct); }
+                catch { break; }
+                token = _options.TokenProvider?.Invoke();
+                if (!string.IsNullOrEmpty(token)) return token;
+            }
+            return token;
         }
 
         /// <summary>Кодирует <paramref name="json"/> в <c>0x20</c>-фрейм и шлёт через релей.</summary>
@@ -287,6 +322,13 @@ namespace VhrGames.Sdk
         private void HandleRelayClosed(string reason)
         {
             _authSent = false;
+            // Сокет — несущая лобби-кадров; его обрыв означает, что ждущие ответы
+            // (create/join/start) уже НЕ придут — фейлим их сразу, а не ждём 15-с
+            // таймаут (иначе UI висит «Создание лобби…» лишние секунды).
+            var ex = new VhrSdkException("relay_closed",
+                string.IsNullOrEmpty(reason) ? "Соединение с релеем закрылось." : reason);
+            _lobbyTcs?.TrySetException(ex);
+            _startTcs?.TrySetException(ex);
             try { OnClosed?.Invoke(reason); } catch { /* подписчик */ }
         }
 
@@ -304,6 +346,7 @@ namespace VhrGames.Sdk
 
             switch (ev)
             {
+                case "auth": HandleAuthEvent(json); break;
                 case "lobby": HandleLobbyEvent(json); break;
                 case "invite": HandleInviteEvent(json); break;
                 case "starting": HandleStartingEvent(json); break;
@@ -312,6 +355,15 @@ namespace VhrGames.Sdk
                 case "error": HandleErrorEvent(json); break;
                 default: break; // forward-compat
             }
+        }
+
+        private void HandleAuthEvent(string json)
+        {
+            // Сервер подтвердил auth и прислал наш userId — фиксируем «себя», чтобы
+            // IsHost/isSelf работали в лобби ещё до старта матча (раньше SelfUserId
+            // выставлялся только в ev:start).
+            var uid = ExtractString(json, "userId");
+            if (!string.IsNullOrEmpty(uid)) SelfUserId = uid;
         }
 
         private void HandleLobbyEvent(string json)
