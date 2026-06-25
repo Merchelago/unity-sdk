@@ -3,6 +3,20 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
+## [1.7.4] - 2026-06-25
+
+### Диагностика + защита от вечного зависания на connect (релей-сокет WebGL)
+- Live-доказано: бэкенд принимает браузерный WS с ЛЮБЫМ Origin (`api.vhrweb.ru`/`vhrgames.ru`/нет) →
+  `join`→`0x81` за 0.27с. И v1.7.3 реально живёт на платформе (консоль: `Initializing VHR SDK v1.7.3`),
+  но висит на `VhrRelay.ConnectAsync` ДО шага auth (нет `[VHR Lobby] auth →`). Значит баг в
+  WebGL-сокете клиента (раньше не проверялся на реальном WebGL, только из редактора нативным сокетом).
+- **`VhrRelay.ConnectAsync`: жёсткий таймаут 10с на connect+join** (linked CTS) — больше НЕ висит вечно,
+  бросает `relay_timeout` с понятным текстом. + пошаговые `UnityEngine.Debug.Log`: `ConnectAsync →`,
+  `сокет ОТКРЫТ`, `join отправлен`, `JOINED self=N`.
+- **`WebGLVhrSocket`: логи колбэков** `[VHR WS] onopen/onclose/msg type=0x..` + предупреждение о гонке
+  регистрации `Instances`. Следующий лог в F12 точно покажет, где обрыв: не сработал `onopen`,
+  не пришёл `0x81`, или гонка `Instances`.
+
 ## [1.7.3] - 2026-06-25
 
 ### Исправлено (КРИТ: протухший токен на старте лобби)

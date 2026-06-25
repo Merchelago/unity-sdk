@@ -157,16 +157,25 @@ namespace VhrGames.Sdk
             _socket.OnMessage += HandleMessageRaw;
             _socket.OnClose += HandleCloseRaw;
 
-            if (ct.CanBeCanceled)
-                ct.Register(() => _joinedTcs?.TrySetCanceled());
+            // Жёсткий таймаут на ВЕСЬ connect+join. На WebGL раньше тут висло вечно,
+            // если onopen/0x81 не приходили — теперь через 10с бросаем понятную ошибку
+            // вместо бесконечного «Создание лобби…». Линкуем с внешним ct.
+            using var connCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connCts.CancelAfter(TimeSpan.FromSeconds(10));
+            connCts.Token.Register(() => _joinedTcs?.TrySetException(
+                new VhrSdkException("relay_timeout", "Релей не подтвердил вход за 10с (нет onopen или SJoined 0x81).")));
 
-            await _socket.ConnectAsync(baseUrl.Trim(), ct).ConfigureAwait(false);
+            UnityEngine.Debug.Log($"[VHR Relay] ConnectAsync → {baseUrl} (room={_room})");
+            await _socket.ConnectAsync(baseUrl.Trim(), connCts.Token).ConfigureAwait(false);
+            UnityEngine.Debug.Log("[VHR Relay] сокет ОТКРЫТ → шлю join");
 
             // Шлём join сразу после открытия.
             SendJoin(_room);
+            UnityEngine.Debug.Log("[VHR Relay] join отправлен → жду 0x81 SJoined…");
 
             // Ждём подтверждения входа (0x81).
             await _joinedTcs.Task.ConfigureAwait(false);
+            UnityEngine.Debug.Log($"[VHR Relay] JOINED self={SelfId} ✓");
 
             // Опциональный апгрейд на WebRTC (только WebGL). Прозрачно для игры:
             // тот же Send/OnData. При любом сбое/таймауте остаёмся на WebSocket.

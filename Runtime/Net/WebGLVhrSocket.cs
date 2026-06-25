@@ -115,7 +115,12 @@ namespace VhrGames.Sdk
         [MonoPInvokeCallback(typeof(OpenCb))]
         private static void OnOpenStatic(int id)
         {
-            if (!Instances.TryGetValue(id, out var self)) return;
+            UnityEngine.Debug.Log("[VHR WS] onopen id=" + id);
+            if (!Instances.TryGetValue(id, out var self))
+            {
+                UnityEngine.Debug.LogWarning("[VHR WS] onopen: инстанс " + id + " не найден (гонка регистрации Instances!)");
+                return;
+            }
             try { self.OnOpen?.Invoke(); } catch { /* обработчик игры */ }
             self._connectTcs?.TrySetResult(true);
         }
@@ -140,6 +145,7 @@ namespace VhrGames.Sdk
             }
 
             if (payload == null) return;
+            UnityEngine.Debug.Log("[VHR WS] msg len=" + payload.Length + " type=0x" + payload[0].ToString("X2"));
             if (!Instances.TryGetValue(id, out var self)) return;
             try { self.OnMessage?.Invoke(payload); } catch { /* обработчик игры */ }
         }
@@ -147,6 +153,7 @@ namespace VhrGames.Sdk
         [MonoPInvokeCallback(typeof(CloseCb))]
         private static void OnCloseStatic(int id, int errFlag)
         {
+            UnityEngine.Debug.Log("[VHR WS] onclose id=" + id + " err=" + errFlag);
             if (!Instances.TryGetValue(id, out var self)) return;
             var reason = errFlag != 0 ? "websocket error" : null;
             // Если соединение так и не открылось — разблокируем ConnectAsync.
