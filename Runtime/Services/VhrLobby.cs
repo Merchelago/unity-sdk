@@ -265,7 +265,9 @@ namespace VhrGames.Sdk
                 var token = await AcquirePlayerTokenAsync(ct).ConfigureAwait(false);
                 Debug.Log("[VHR Lobby] auth → " + (string.IsNullOrEmpty(token)
                     ? "ТОКЕН ОТСУТСТВУЕТ — войдите на платформе (relay-auth/друзья/лобби работать не будут)"
-                    : "токен получен (len=" + token.Length + ")"));
+                    : (IsTokenStale(token)
+                        ? "токен ПРОТУХ и обновить не удалось — войдите заново на платформе"
+                        : "токен свежий получен (len=" + token.Length + ")")));
                 var sb = new StringBuilder();
                 sb.Append("{\"op\":\"auth\"");
                 AppendStr(sb, "token", token ?? string.Empty);
@@ -276,29 +278,59 @@ namespace VhrGames.Sdk
         }
 
         /// <summary>
-        /// Берёт JWT игрока у провайдера. На WebGL токен может прийти от родителя
-        /// через postMessage с задержкой — если провайдер вернул пусто, просим
-        /// родителя прислать токен (<c>vhr:sdk:token-request</c>) и ждём появления
-        /// значения до ~2 c. Если токен есть сразу (URL <c>?access_token=</c> или уже
-        /// присланный postMessage) — возвращаем мгновенно, без ожидания.
+        /// Берёт СВЕЖИЙ JWT игрока у провайдера. JWT платформы живёт ~15 мин, и к
+        /// моменту создания лобби токен в URL/кэше может уже протухнуть — поэтому
+        /// проверяем <c>exp</c>: если токен пуст ИЛИ протух/вот-вот протухнет, просим
+        /// родителя прислать свежий (<c>vhr:sdk:token-request</c> → его refresh →
+        /// postMessage) и ждём непротухший до ~3 c. Свежий валидный токен — отдаём
+        /// сразу, без задержки.
         /// </summary>
         private async Task<string> AcquirePlayerTokenAsync(CancellationToken ct)
         {
             var token = _options.TokenProvider?.Invoke();
-            if (!string.IsNullOrEmpty(token)) return token;
+            if (!string.IsNullOrEmpty(token) && !IsTokenStale(token)) return token;
 
-            // Пусто: просим родителя (страницу платформы) прислать свежий токен.
+            // Пусто или протух: просим родителя (страницу платформы) обновить токен.
             try { VhrWebGlTokenChannel.RequestRefresh(); } catch { /* нет родителя/не WebGL */ }
 
-            for (int i = 0; i < 8; i++) // ~2 c суммарно (8 × 0.25 c)
+            for (int i = 0; i < 12; i++) // ~3 c суммарно (12 × 0.25 c)
             {
                 if (ct.IsCancellationRequested) break;
                 try { await Awaitable.WaitForSecondsAsync(0.25f, ct); }
                 catch { break; }
-                token = _options.TokenProvider?.Invoke();
-                if (!string.IsNullOrEmpty(token)) return token;
+                var fresh = _options.TokenProvider?.Invoke();
+                if (!string.IsNullOrEmpty(fresh) && !IsTokenStale(fresh)) return fresh;
+                if (!string.IsNullOrEmpty(fresh)) token = fresh; // хоть непустой — на крайний случай
             }
-            return token;
+            return token; // лучшее, что есть — если протух, UI честно покажет «войдите заново»
+        }
+
+        /// <summary>
+        /// Истёк ли JWT (или истекает в ближайшие 90 c). Декодирует <c>exp</c> из
+        /// payload БЕЗ проверки подписи — лишь чтобы не слать релею заведомо
+        /// протухший токен. Если это не JWT / нет <c>exp</c> / не разобрали — вернёт
+        /// <c>false</c> (шлём как есть, пусть валидирует сервер).
+        /// </summary>
+        private static bool IsTokenStale(string jwt)
+        {
+            try
+            {
+                var parts = jwt.Split('.');
+                if (parts.Length < 2) return false;
+                var b64 = parts[1].Replace('-', '+').Replace('_', '/');
+                switch (b64.Length % 4) { case 2: b64 += "=="; break; case 3: b64 += "="; break; }
+                var json = Encoding.UTF8.GetString(Convert.FromBase64String(b64));
+                int k = json.IndexOf("\"exp\"", StringComparison.Ordinal);
+                if (k < 0) return false;
+                k = json.IndexOf(':', k);
+                if (k < 0) return false;
+                k++;
+                int start = k;
+                while (k < json.Length && (char.IsDigit(json[k]) || json[k] == ' ')) k++;
+                if (!long.TryParse(json.Substring(start, k - start).Trim(), out long expSec)) return false;
+                return DateTimeOffset.FromUnixTimeSeconds(expSec) <= DateTimeOffset.UtcNow.AddSeconds(90);
+            }
+            catch { return false; }
         }
 
         /// <summary>Кодирует <paramref name="json"/> в <c>0x20</c>-фрейм и шлёт через релей.</summary>
