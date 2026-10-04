@@ -190,6 +190,18 @@ namespace VhrGames.Sdk
 
         /// <summary>Роли пользователя (напр. <c>"User"</c>, <c>"Developer"</c>, <c>"Admin"</c>).</summary>
         public string[] roles;
+
+        /// <summary>
+        /// Отображаемый ник, если сервер его вернул. Для песочного ключа (Unity Editor,
+        /// режим Live) — <c>"Тестовый игрок"</c>.
+        /// </summary>
+        public string nickName;
+
+        /// <summary>
+        /// <c>true</c> — синтетический профиль тестового игрока песочницы (<c>sbx_*</c>):
+        /// запрос сделан из Unity Editor с песочным ключом. Реальных данных игрока нет.
+        /// </summary>
+        public bool isSandbox;
     }
 
     /// <summary>

@@ -20,7 +20,7 @@ namespace VhrGames.Sdk
     public static class VhrSdk
     {
         /// <summary>SDK semantic version. Mirrored into the build marker and sent as <c>X-Vhr-Sdk-Version</c>.</summary>
-        public const string SdkVersion = "1.7.7";
+        public const string SdkVersion = "1.9.0";
 
         private static VhrSession _session;
         private static VhrSdkOptions _options;
@@ -31,7 +31,11 @@ namespace VhrGames.Sdk
         /// <summary>True once <see cref="InitializeAsync"/> (or the DI entry point) completed.</summary>
         public static bool IsInitialized { get; private set; }
 
-        /// <summary>Economy service. Null until initialized.</summary>
+        /// <summary>
+        /// Экономика: баланс, каталог товаров игры, покупки с подтверждением игроком
+        /// в окне платформы, инвентарь, кнопка «Пополнить» (<see cref="IVhrEconomy.OpenTopUp"/>).
+        /// Пополнять баланс, списывать и начислять монеты из игры нельзя. Null until initialized.
+        /// </summary>
         public static IVhrEconomy Economy { get; private set; }
 
         /// <summary>Leaderboard service. Null until initialized.</summary>
@@ -57,6 +61,18 @@ namespace VhrGames.Sdk
 
         /// <summary>Игровые сессии: старт/энд/heartbeat (см. <see cref="IVhrGameSessions"/>). Null until initialized.</summary>
         public static IVhrGameSessions GameSessions { get; private set; }
+
+        /// <summary>
+        /// Реклама: interstitial и rewarded от Рекламной сети Яндекса, показывает
+        /// сайт VHR (см. <see cref="IVhrAds"/>). Награда за rewarded — внутриигровая;
+        /// платформенные монеты за рекламу не начисляются. Тот же экземпляр, что
+        /// внедряет <see cref="VhrSdkLifetimeScope"/>. Null until initialized.
+        /// </summary>
+        /// <example><code>
+        /// var r = await VhrSdk.Ads.ShowRewardedAsync();
+        /// if (r.IsRewarded) GiveExtraLife();
+        /// </code></example>
+        public static IVhrAds Ads { get; private set; }
 
         /// <summary>Session / connection-state holder. Null until initialized.</summary>
         public static IVhrSession Session => _session;
@@ -143,7 +159,7 @@ namespace VhrGames.Sdk
             // готов до первого 401. Вне WebGL — безопасный no-op.
             VhrWebGlTokenChannel.EnsureInitialized();
 
-            Economy = new VhrEconomyService(api, options);
+            Economy = new VhrEconomyService(api, options, log);
             Leaderboard = new VhrLeaderboardService(api, options, log);
             Servers = new VhrServersService(api, options);
             Tournaments = new VhrTournamentsService(api, options);
@@ -152,8 +168,13 @@ namespace VhrGames.Sdk
             PlayerStats = new VhrPlayerStatsService(api, options, log);
             Achievements = new VhrAchievementsService(api, options, log);
             GameSessions = new VhrGameSessionsService(api, options, log);
+            // Общий экземпляр: DI (VhrSdkLifetimeScope) получает тот же объект,
+            // иначе подписки OnAdOpened/OnAdClosed на «другой» сервис не срабатывали бы.
+            Ads = VhrAdsService.GetOrCreate(options, log);
 
-            log.Info($"Initializing VHR SDK v{SdkVersion} for game '{options.GameId}'.");
+            var editorMode = options.IsEditorLiveSandbox ? " [Editor: Live-песочница]"
+                : options.IsEditorSimulation ? " [Editor: Simulation]" : string.Empty;
+            log.Info($"Initializing VHR SDK v{SdkVersion} for game '{options.GameId}'.{editorMode}");
             session.SetState(VhrConnectionState.Connecting);
 
             if (options.PingOnInitialize)
@@ -232,6 +253,8 @@ namespace VhrGames.Sdk
             PlayerStats = null;
             Achievements = null;
             GameSessions = null;
+            VhrAdsService.ResetShared();
+            Ads = null;
             IsInitialized = false;
         }
     }

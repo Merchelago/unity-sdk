@@ -1,8 +1,8 @@
 {
   "name": "ru.vhrgames.sdk",
-  "version": "1.7.7",
+  "version": "1.9.0",
   "displayName": "VHR Games SDK",
-  "description": "Mandatory VHR Games SDK for Unity 6 WebGL titles. Provides player profile + name resolution, friends, player stats/progression, achievements, game sessions, economy (incl. ad reports), leaderboard, tournaments, lobby/matchmaking + relay multiplayer, server matchmaking (UDP, domain/uuid) and session services that talk to the VHR backend, plus a build marker handshake (vhr-sdk.json) that the backend validates on upload. Builds without this SDK are rejected on confirm-upload.",
+  "description": "Mandatory VHR Games SDK for Unity 6 WebGL titles. Provides player profile + name resolution, friends, player stats/progression, achievements, game sessions, economy (game catalog items, inventory, purchases confirmed by the player in the VHR platform window; no in-game top-up, spend or grant), in-game ads (interstitial/rewarded via the VHR host page, Yandex Advertising Network), leaderboard, tournaments, lobby/matchmaking + relay multiplayer, server matchmaking (UDP, domain/uuid) and session services that talk to the VHR backend, plus a build marker handshake (vhr-sdk.json) that the backend validates on upload, and Unity Editor testing of every API against the real backend with a sandbox key (VHR menu: Editor testing and Game catalog windows). Builds without this SDK are rejected on confirm-upload.",
   "unity": "6000.0",
   "documentationUrl": "https://github.com/Merchelago/unity-sdk",
   "changelogUrl": "https://github.com/Merchelago/unity-sdk/blob/main/CHANGELOG.md",
@@ -12,6 +12,8 @@
     "vhrgames",
     "sdk",
     "economy",
+    "purchases",
+    "sandbox",
     "leaderboard",
     "webgl"
   ],
@@ -36,7 +38,7 @@
   "samples": [
     {
       "displayName": "Basic Economy Sample",
-      "description": "Minimal MonoBehaviour showing init, balance fetch and coin grant.",
+      "description": "Minimal MonoBehaviour shop: init, balance, catalog items, purchase confirmed by the player, owned items and the top-up button.",
       "path": "Samples~/Basic"
     }
   ],

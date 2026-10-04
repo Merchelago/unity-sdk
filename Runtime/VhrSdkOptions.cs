@@ -106,6 +106,14 @@ namespace VhrGames.Sdk
         /// нет — там задавайте <see cref="TokenProvider"/> явно (например, привязав
         /// его к своей системе авторизации).
         /// </para>
+        /// <para>
+        /// SDK 1.9.0: на платформе хост передаёт <b>игровой</b> токен (audience
+        /// <c>…#game</c>, claims <c>gid</c>/<c>sub</c>, 60 минут) тем же сообщением
+        /// <c>vhr:sdk:token</c> и обновляет его по <c>vhr:sdk:token-request</c> — SDK
+        /// просит свежий заранее (за 5 минут до истечения) и при 401. В Unity Editor
+        /// в режиме <see cref="VhrEditorMode.LiveSandbox"/> провайдер подменяется
+        /// песочным ключом из окна <c>VHR → Тестирование в Editor</c>.
+        /// </para>
         /// </summary>
         public Func<string> TokenProvider = null;
 
@@ -121,11 +129,94 @@ namespace VhrGames.Sdk
         public bool VerboseLogging = false;
 
         /// <summary>
+        /// Встроенная авто-пауза на время рекламы (<see cref="IVhrAds.AutoPause"/>):
+        /// <c>Time.timeScale = 0</c>, <c>AudioListener.pause = true</c>, курсор
+        /// разблокирован; после рекламы всё возвращается. По умолчанию выключено —
+        /// у многих игр своя пауза (тогда используйте <see cref="IVhrAds.OnAdOpened"/> /
+        /// <see cref="IVhrAds.OnAdClosed"/>). Можно переключать и в рантайме через
+        /// <c>VhrSdk.Ads.AutoPause</c>.
+        /// </summary>
+        public bool AdsAutoPause = false;
+
+        /// <summary>
+        /// Результат симуляции рекламы в редакторе и не-WebGL сборках (реальная
+        /// реклама есть только в WebGL на vhrgames.ru). По умолчанию
+        /// <see cref="VhrAdSimulationMode.Success"/>.
+        /// </summary>
+        public VhrAdSimulationMode AdsSimulation = VhrAdSimulationMode.Success;
+
+        /// <summary>Длительность симулированной рекламы в секундах реального времени. По умолчанию 1.5.</summary>
+        public float AdsSimulationDelaySeconds = 1.5f;
+
+        /// <summary>
+        /// Режим работы SDK <b>в Unity Editor</b> (SDK 1.9.0+). В сборках игнорируется.
+        /// <list type="bullet">
+        /// <item><see cref="VhrEditorMode.Auto"/> (по умолчанию) — как выбрано в окне
+        /// <c>VHR → Тестирование в Editor</c>: Live, если там включён Live и сохранён
+        /// песочный ключ, иначе Simulation.</item>
+        /// <item><see cref="VhrEditorMode.Simulation"/> — экономика локальная (тестовый
+        /// баланс, диалог подтверждения покупки), реклама симулируется, остальные
+        /// сервисы — как в 1.8 (HTTP с вашим <see cref="TokenProvider"/>).</item>
+        /// <item><see cref="VhrEditorMode.LiveSandbox"/> — ВСЕ сервисы ходят на настоящий
+        /// сервер с песочным ключом из окна VHR (тестовый игрок <c>sbx_*</c>, 10 000
+        /// тестовых монет); <see cref="GameId"/> берётся из claim <c>gid</c> ключа.</item>
+        /// </list>
+        /// Сам ключ в опциях не хранится и в сборку не попадает: он читается из
+        /// <c>EditorPrefs</c> только в Unity Editor.
+        /// </summary>
+        public VhrEditorMode EditorMode = VhrEditorMode.Auto;
+
+        /// <summary>
+        /// Цена товара по умолчанию (в монетах за 1 шт.) для локальной симуляции
+        /// покупок в Unity Editor (режим Simulation). По умолчанию 100.
+        /// </summary>
+        public long SimulatedDefaultItemPrice = 100;
+
+        /// <summary>
+        /// Необязательные цены товаров для режима Simulation: <c>itemId → цена за 1 шт.</c>.
+        /// Товары, которых нет в словаре, стоят <see cref="SimulatedDefaultItemPrice"/>.
+        /// В режиме Live цены берутся из каталога платформы.
+        /// </summary>
+        public System.Collections.Generic.Dictionary<string, long> SimulatedItemPrices;
+
+        /// <summary>
+        /// <c>true</c> после <see cref="Validate"/>, если SDK работает в Unity Editor в
+        /// режиме <see cref="VhrEditorMode.Simulation"/> (экономика локальная). В сборках — всегда <c>false</c>.
+        /// </summary>
+        public bool IsEditorSimulation { get; internal set; }
+
+        /// <summary>
+        /// <c>true</c> после <see cref="Validate"/>, если SDK работает в Unity Editor в
+        /// режиме <see cref="VhrEditorMode.LiveSandbox"/> (настоящий сервер, песочный ключ).
+        /// В сборках — всегда <c>false</c>.
+        /// </summary>
+        public bool IsEditorLiveSandbox { get; internal set; }
+
+#if UNITY_EDITOR
+        // Режим Editor применяется один раз (Validate может вызываться повторно).
+        [NonSerialized] private bool _editorModeApplied;
+#endif
+
+        /// <summary>
         /// Validates required fields. Throws <see cref="VhrSdkException"/> with a
         /// stable error code if the configuration is unusable.
         /// </summary>
+        /// <remarks>
+        /// В Unity Editor здесь же применяется <see cref="EditorMode"/>: в режиме
+        /// LiveSandbox подставляются песочный ключ (как <see cref="TokenProvider"/>),
+        /// <see cref="GameId"/> из claim <c>gid</c> и, если задан в окне VHR, адрес
+        /// dev-стенда.
+        /// </remarks>
         public void Validate()
         {
+#if UNITY_EDITOR
+            if (!_editorModeApplied)
+            {
+                _editorModeApplied = true;
+                VhrEditorSandbox.ApplyTo(this);
+            }
+#endif
+
             if (string.IsNullOrWhiteSpace(BridgeBaseUrl))
                 throw new VhrSdkException("config_invalid", "VhrSdkOptions.BridgeBaseUrl is required.");
             if (string.IsNullOrWhiteSpace(ServersBaseUrl))
@@ -205,6 +296,27 @@ namespace VhrGames.Sdk
             };
         }
 
+        /// <summary>
+        /// Id игры для запросов «моей игры» (каталог, инвентарь, ачивки игры): claim
+        /// <c>gid</c> текущего токена (игровой токен платформы или песочный ключ в
+        /// Editor), иначе <see cref="GameId"/>. Подпись не проверяется — это лишь
+        /// подсказка адреса, доступ решает сервер.
+        /// </summary>
+        internal string ResolveCurrentGameId()
+        {
+            try
+            {
+                var token = TokenProvider?.Invoke();
+                if (VhrJwt.TryDecode(token, out var info) && !string.IsNullOrWhiteSpace(info.GameId))
+                    return info.GameId.Trim();
+            }
+            catch
+            {
+                // провайдер кинул — берём GameId из опций
+            }
+            return string.IsNullOrWhiteSpace(GameId) ? GameId : GameId.Trim();
+        }
+
         private static string SafeAbsoluteUrl()
         {
             try { return Application.absoluteURL; }
@@ -257,6 +369,31 @@ namespace VhrGames.Sdk
     }
 
     /// <summary>
+    /// Режим SDK в Unity Editor (<see cref="VhrSdkOptions.EditorMode"/>). В сборках
+    /// игнорируется: там всегда настоящий сервер с токеном игрока от платформы.
+    /// </summary>
+    public enum VhrEditorMode
+    {
+        /// <summary>
+        /// Взять режим из окна <c>VHR → Тестирование в Editor</c>: Live — если там
+        /// выбран Live и сохранён песочный ключ, иначе Simulation.
+        /// </summary>
+        Auto = 0,
+
+        /// <summary>
+        /// Локальная симуляция: экономика (тестовый баланс + диалог подтверждения
+        /// покупки) и реклама без сервера; остальные сервисы — как в SDK 1.8.
+        /// </summary>
+        Simulation = 1,
+
+        /// <summary>
+        /// Настоящий сервер VHR с песочным ключом: все API SDK работают от имени
+        /// тестового игрока <c>sbx_*</c> с тестовыми монетами. Ключ — в окне VHR.
+        /// </summary>
+        LiveSandbox = 2
+    }
+
+    /// <summary>
     /// All errors raised by the SDK carry a stable, machine-readable
     /// <see cref="Code"/> (e.g. <c>config_invalid</c>, <c>http_error</c>,
     /// <c>not_implemented</c>, <c>sdk_required</c>).
@@ -269,12 +406,33 @@ namespace VhrGames.Sdk
         /// <summary>HTTP status code when the error originated from a transport call; otherwise 0.</summary>
         public long HttpStatus { get; }
 
+        /// <summary>
+        /// Код ошибки из тела ответа сервера (<c>{ "code": "..." }</c>), если он есть:
+        /// напр. <c>insufficient_funds</c>, <c>daily_limit</c>, <c>parental_block</c>,
+        /// <c>game_mismatch</c>, <c>sdk_update_required</c>. Иначе <c>null</c>.
+        /// <see cref="Code"/> по-прежнему отражает HTTP-статус (обратная совместимость).
+        /// </summary>
+        public string ServerCode { get; }
+
+        /// <summary>Сырое тело ответа сервера при HTTP-ошибке (может быть <c>null</c>).</summary>
+        public string ResponseBody { get; }
+
         /// <summary>Creates a new SDK exception.</summary>
         public VhrSdkException(string code, string message, long httpStatus = 0, Exception inner = null)
             : base(message, inner)
         {
             Code = code;
             HttpStatus = httpStatus;
+        }
+
+        /// <summary>Создаёт исключение HTTP-ошибки с кодом и телом ответа сервера.</summary>
+        public VhrSdkException(string code, string message, long httpStatus, string serverCode, string responseBody)
+            : base(message)
+        {
+            Code = code;
+            HttpStatus = httpStatus;
+            ServerCode = string.IsNullOrEmpty(serverCode) ? null : serverCode;
+            ResponseBody = responseBody;
         }
     }
 }

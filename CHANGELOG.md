@@ -3,6 +3,112 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/).
 
+## [1.9.0] - 2026-10-04
+
+### Изменено — покупки только через платформу, с подтверждением игроком (BREAKING по поведению)
+Правило платформы: **игроки пополняют счёт только на платформе, а в играх только тратят** — на
+товары каталога игры и только с подтверждением в окне платформы. 1 монета = 1 рубль.
+- **`PurchaseAsync` — полный цикл «намерение → подтверждение → итог»**: `POST /api/purchase` →
+  `202 { status:"confirmation_required", intentId, itemId, title, quantity, price, expiresAt }` (или
+  сразу `{ status:"completed", purchaseId, balance }` для идемпотентного повтора) → на vhrgames.ru SDK
+  шлёт хосту `postMessage { type:'vhr:purchase:confirm', intentId, requestId }` и ждёт
+  `{ type:'vhr:purchase:result', requestId, intentId, status, balance?, purchaseId? }` до 3 минут
+  (намерение живёт 120 с; без ответа → `Expired`). Ответы принимаются только от `window.parent` с
+  origin платформы; `requestId`/`intentId` сверяются.
+- **Новый результат `VhrPurchaseResult`** со статусом `VhrPurchaseStatus`:
+  `Completed | Cancelled | InsufficientFunds | Expired | Error | SdkUpdateRequired | Forbidden`,
+  плюс `PurchaseId`, `Balance`/`HasBalance`, `Title`, `Price`, `IntentId`, `ErrorCode`, `Message`,
+  `IdempotentReplay`, `IsTest`. Обратная совместимость: члены `success`/`balance`/`idempotentReplay`/
+  `message` ([Obsolete]) и неявное приведение к `VhrEconomyResult` — код 1.8 компилируется.
+- Ошибки моста маппятся в статусы: `426 sdk_update_required` → `SdkUpdateRequired`;
+  `403 game_token_forbidden | game_mismatch | parental_block` и `429 daily_limit` → `Forbidden`
+  (код в `ErrorCode`); `409 insufficient_funds` → `InsufficientFunds`. `PurchaseAsync` не бросает
+  исключений (кроме отмены `ct`); одна покупка за раз (иначе `Error`/`busy`).
+- **Колбэк-перегрузка** `Purchase(itemId, quantity, Action<VhrPurchaseResult>, externalId)`.
+- **WebGL вне страницы платформы** → сразу `Error`/`not_hosted` без запроса к серверу;
+  `IsPurchaseAvailable` — можно ли показывать магазин.
+- **Пополнение — только на платформе**: `OpenTopUp()` → `postMessage { type:'vhr:topup:open' }`
+  (в Editor — `Application.OpenURL` страницы платформы с логом). **Событие `OnBalanceChanged`**
+  (и R3-поток `BalanceChanged`) — по `{ type:'vhr:balance:changed', balance }` от хоста и после
+  успешной покупки.
+- Новый WebGL-плагин `VhrEconomyBridge.jslib` (по образцу `VhrAdsBridge.jslib`: общий фильтр origin,
+  JS → C# только целые числа через статический делегат, детали — JSON-строкой).
+
+### Добавлено — каталог игры
+- `Economy.GetItemsAsync()` → `GET /api/items?gameId=<gid>` — товары игры (`VhrCatalogItem`: `id`,
+  `code`, `title`, `description`, `priceCoins`, `active`, `createdAt`, `iconUrl`).
+- `Economy.GetOwnedItemsAsync()` → `GET /api/inventory` — что игрок уже купил
+  (`VhrOwnedItem`: `itemId`, `quantity`, `lastPurchasedAt`).
+- `Achievements.GetForCurrentGameAsync()` и `GetMineForCurrentGameAsync()` (фильтр `GetMineAsync`
+  по игре). `gameId` SDK берёт сам — из claim `gid` токена или `VhrSdkOptions.GameId`.
+
+### Добавлено — тестирование всех API в Unity Editor на настоящем сервере
+- **`VhrSdkOptions.EditorMode = Auto | Simulation | LiveSandbox`** (по умолчанию `Auto`: как выбрано
+  в окне; без ключа — Simulation). **Simulation** — экономика локальная (тестовый баланс 10 000,
+  диалог подтверждения, `SimulatedItemPrices`/`SimulatedDefaultItemPrice`), реклама — симуляция.
+  **LiveSandbox** — все сервисы (Economy, Achievements, Friends, GameSessions, Leaderboard, PlayerStats,
+  Profile, Tournaments, Servers, Lobby/Relay) ходят на настоящий сервер с песочным ключом в
+  `Authorization: Bearer`, `GameId` = claim `gid` ключа; покупка — диалог-имитация окна платформы →
+  `POST purchase-intents/{id}/confirm | cancel`. Флаги `IsEditorSimulation` / `IsEditorLiveSandbox`.
+- **Окно `VHR → Тестирование в Editor`**: ключ (скрытое поле + «Показать»), «Проверить»
+  (`GET sandbox/me`: игра, тестовый игрок, баланс, срок ключа), «Проверить все API» (read-only GET по
+  всем сервисам), переключатель Simulation / Live, «Сбросить тестовые данные» (`POST sandbox/reset`),
+  «Получить ключ», поле «Сервер» для dev-стенда.
+- **Окно `VHR → Каталог игры`**: товары и достижения игры (ID, название, цена/описание, иконка, статус),
+  «Копировать ID», «Обновить», «Открыть в кабинете», «Сгенерировать C#-константы» (`VhrCatalogIds.cs`).
+  Только чтение — создание и редактирование в кабинете на сайте.
+- Ключ хранится только в `EditorPrefs` (имя уникально для проекта), читается только под
+  `#if UNITY_EDITOR` и не сериализуется ни в какой ассет. `VhrSandboxKeyBuildGuard`
+  (`IPreprocessBuildWithReport`) перед сборкой ищет ключ в сценах/ассетах/настройках/скриптах и предупреждает.
+- `VhrUser` получил `nickName` и `isSandbox` (синтетический профиль песочницы).
+
+### Устарело и отключено
+- **`SpendAsync` и `GrantCoinsAsync` — `[Obsolete(..., false)]`**: сразу возвращают `success = false`
+  с `code = "spend_disabled"` / `"grant_disabled"` **без запроса к серверу** (мост отвечает `403`).
+  Списывать и начислять монеты из игры нельзя — продавайте товары каталога через `PurchaseAsync`.
+
+### Исправлено и улучшено
+- **Игровой токен (60 мин) обновляется заранее**: на WebGL за 5 минут до истечения SDK фоново шлёт
+  `vhr:sdk:token-request`, а истёкший токен перед запросом заменяет свежим (ждёт до 3 с; не чаще одного
+  раза на токен). Обновление по 401 — как раньше.
+- `VhrSdkException.ServerCode` / `ResponseBody` — код из тела ошибки моста (`{ code }`); статусы
+  `426` → `sdk_update_required`, `429` → `rate_limited`.
+- `GetBalanceAsync`: `userId` можно не передавать; `VhrBalance.coins` теперь заполняется из ответа
+  моста (`{ userId, balance }` — раньше `coins` оставался 0), добавлено поле `balance`.
+
+## [1.8.0] - 2026-10-04
+
+### Добавлено — реклама в игре (`VhrSdk.Ads` / `IVhrAds`)
+- **Новый сервис `IVhrAds`**: `ShowInterstitialAsync()` и `ShowRewardedAsync()` → `VhrAdResult`
+  со статусом `Rewarded | Closed | Unavailable | Cooldown | Error`; колбэк-перегрузки
+  `ShowInterstitial(Action<VhrAdResult>)` / `ShowRewarded(Action<VhrAdResult>)` для кода без async.
+  Доступ: `VhrSdk.Ads` или внедрение `IVhrAds` через `VhrSdkLifetimeScope` (один общий экземпляр).
+- **События `OnAdOpened` / `OnAdClosed`** (парные) — поставить паузу / снять её. Встроенная
+  **авто-пауза** по флагу `VhrSdkOptions.AdsAutoPause` / `VhrSdk.Ads.AutoPause`
+  (`Time.timeScale = 0`, `AudioListener.pause`, разблокировка курсора; затем восстановление).
+- **Рекламу показывает сайт VHR** (Рекламная сеть Яндекса) поверх игры: новый WebGL-плагин
+  `VhrAdsBridge.jslib` шлёт родителю `postMessage { type:'vhr:ads:show', kind, requestId }` и
+  принимает `vhr:ads:opened` / `vhr:ads:result` только от `window.parent` с origin платформы
+  (общий фильтр с каналом токена). JS → C# — только целые числа через статический
+  делегат (`makeDynCall('viiii')`), без маршалинга строк.
+- **Игра не зависает**: хост молчит 5 с → `Unavailable`; показ после `opened` не завершился за
+  5 мин → `Closed`. WebGL вне хоста VHR (открыта напрямую / на чужом сайте) → сразу `Unavailable`.
+  Повторный вызов во время показа → `Cooldown` (`Reason = "busy"`).
+- **Редактор и не-WebGL — симуляция**: лог + результат через `AdsSimulationDelaySeconds`
+  (по умолчанию 1.5 с реального времени) по режиму `AdsSimulation`
+  (`Success | ClosedEarly | Unavailable | Cooldown | Error`).
+- Награда за rewarded — **внутриигровая**: SDK лишь сообщает, что просмотр засчитан.
+  Платформенные монеты (= рубли) за рекламу не начисляются. Доход разработчика — 10% дохода
+  платформы от рекламы в его игре; учёт ведёт сайт по факту реального показа.
+- Модели: `VhrAdKind`, `VhrAdStatus`, `VhrAdSimulationMode`; `VhrAdResult` расширен
+  (`Status`, `Kind`, `RequestId`, `Reason`, `IsRewarded`, `WasShown`), старые поля
+  `accepted`/`revenue` сохранены для совместимости.
+
+### Устарело
+- **`IVhrEconomy.ReportAdAsync` помечен `[Obsolete]`**: он слал отчёт без реального показа
+  рекламы, **доход по нему больше не засчитывается**. Метод не удалён — старые сборки
+  компилируются (с предупреждением). Переходите на `VhrSdk.Ads`.
+
 ## [1.7.7] - 2026-06-25
 
 ### Исправлено (друзья висли на «Загрузка…») + лобби РАБОТАЕТ

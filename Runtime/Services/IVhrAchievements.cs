@@ -53,6 +53,21 @@ namespace VhrGames.Sdk
         /// <see cref="VhrAchievement.unlocked"/>/<see cref="VhrAchievement.unlockedAt"/>.
         /// </summary>
         Task<VhrGameAchievements[]> GetMyGamesAsync(CancellationToken ct = default);
+
+        /// <summary>
+        /// Все достижения <b>текущей игры</b> — как <see cref="GetForGameAsync"/>, но
+        /// <c>gameId</c> SDK берёт сам: claim <c>gid</c> токена (игровой токен платформы
+        /// или песочный ключ в Editor), иначе <see cref="VhrSdkOptions.GameId"/>.
+        /// Достижения заводятся в кабинете разработчика (игра → Достижения).
+        /// </summary>
+        Task<VhrAchievement[]> GetForCurrentGameAsync(CancellationToken ct = default);
+
+        /// <summary>
+        /// Достижения текущего игрока <b>в текущей игре</b>. Отдельного серверного
+        /// эндпоинта нет — это <see cref="GetMineAsync"/>, отфильтрованный по id игры
+        /// (из <c>gid</c> токена или <see cref="VhrSdkOptions.GameId"/>).
+        /// </summary>
+        Task<VhrUserAchievement[]> GetMineForCurrentGameAsync(CancellationToken ct = default);
     }
 
     /// <summary>HTTP-реализация <see cref="IVhrAchievements"/>.</summary>
@@ -111,6 +126,41 @@ namespace VhrGames.Sdk
             for (int i = 0; i < items.Length; i++)
                 if (items[i] != null) items[i].achievements ??= Array.Empty<VhrAchievement>();
             return items;
+        }
+
+        /// <inheritdoc />
+        public Task<VhrAchievement[]> GetForCurrentGameAsync(CancellationToken ct = default)
+            => GetForGameAsync(CurrentGameIdOrThrow(), ct);
+
+        /// <inheritdoc />
+        public async Task<VhrUserAchievement[]> GetMineForCurrentGameAsync(CancellationToken ct = default)
+        {
+            var gid = CurrentGameIdOrThrow();
+            var mine = await GetMineAsync(ct);
+            if (mine == null || mine.Length == 0) return Array.Empty<VhrUserAchievement>();
+
+            var list = new System.Collections.Generic.List<VhrUserAchievement>(mine.Length);
+            foreach (var ua in mine)
+            {
+                var ach = ua?.achievement;
+                if (ach == null) continue;
+                if (string.Equals(ach.gameId, gid, StringComparison.OrdinalIgnoreCase)
+                    // Подстраховка, если gameId не пришёл: код игровой ачивки — game.{gameId}.{slug}.
+                    || (!string.IsNullOrEmpty(ach.code) &&
+                        ach.code.StartsWith("game." + gid + ".", StringComparison.OrdinalIgnoreCase)))
+                {
+                    list.Add(ua);
+                }
+            }
+            return list.ToArray();
+        }
+
+        private string CurrentGameIdOrThrow()
+        {
+            var gid = _options.ResolveCurrentGameId();
+            if (string.IsNullOrWhiteSpace(gid))
+                throw new VhrSdkException("config_invalid", "Не известен id игры: задайте VhrSdkOptions.GameId.");
+            return gid;
         }
 
         // ---- общие хелперы разбора массива верхнего уровня ----

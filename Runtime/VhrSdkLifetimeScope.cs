@@ -44,6 +44,15 @@ namespace VhrGames.Sdk
         [Tooltip("Log request/response lines.")]
         [SerializeField] private bool verboseLogging;
 
+        [Tooltip("Авто-пауза на время рекламы: Time.timeScale = 0, звук на паузе, курсор свободен. " +
+                 "Выключите, если у игры своя пауза (тогда слушайте IVhrAds.OnAdOpened/OnAdClosed).")]
+        [SerializeField] private bool adsAutoPause;
+
+        [Tooltip("Режим SDK в Unity Editor. Auto — как выбрано в окне VHR → Тестирование в Editor " +
+                 "(Live, если там включён Live и сохранён песочный ключ, иначе Simulation). " +
+                 "В сборках не используется. Песочный ключ здесь НЕ хранится — только в EditorPrefs.")]
+        [SerializeField] private VhrEditorMode editorMode = VhrEditorMode.Auto;
+
         /// <summary>
         /// Builds the options. На WebGL <see cref="VhrSdkOptions.TokenProvider"/>
         /// оставлен <c>null</c>: <see cref="VhrSdkOptions.Validate"/> подставит
@@ -63,7 +72,9 @@ namespace VhrGames.Sdk
             ServersBaseUrl = serversBaseUrl,
             GamesBaseUrl = gamesBaseUrl,
             PingOnInitialize = pingOnInitialize,
-            VerboseLogging = verboseLogging
+            VerboseLogging = verboseLogging,
+            AdsAutoPause = adsAutoPause,
+            EditorMode = editorMode
             // TokenProvider не задаём: дефолт (WebGL access_token) подставит Validate().
         };
 
@@ -88,6 +99,11 @@ namespace VhrGames.Sdk
             builder.Register<IVhrPlayerStats, VhrPlayerStatsService>(Lifetime.Singleton);
             builder.Register<IVhrAchievements, VhrAchievementsService>(Lifetime.Singleton);
             builder.Register<IVhrGameSessions, VhrGameSessionsService>(Lifetime.Singleton);
+            // Реклама — общий на процесс экземпляр (тот же, что VhrSdk.Ads), чтобы
+            // подписки на OnAdOpened/OnAdClosed работали при любом способе доступа.
+            builder.Register<IVhrAds>(
+                r => VhrAdsService.GetOrCreate(r.Resolve<VhrSdkOptions>(), r.Resolve<IVhrLog>()),
+                Lifetime.Singleton);
 
             builder.RegisterEntryPoint<VhrSdkEntryPoint>();
         }

@@ -31,8 +31,15 @@ namespace VhrGames.Sdk
         /// <summary>Owning VHR user id.</summary>
         public string userId;
 
-        /// <summary>Current coin balance (non-negative).</summary>
+        /// <summary>Current coin balance (non-negative). 1 монета = 1 рубль.</summary>
         public long coins;
+
+        /// <summary>
+        /// Тот же баланс под именем, которое отдаёт мост (<c>{ userId, balance }</c>).
+        /// SDK 1.9.0 синхронизирует <see cref="coins"/> и <see cref="balance"/> — раньше
+        /// <see cref="coins"/> из ответа моста оставался 0.
+        /// </summary>
+        public long balance;
 
         /// <summary>Server-side UTC timestamp the balance was computed (ISO-8601), if provided.</summary>
         public string updatedAtUtc;
@@ -67,7 +74,12 @@ namespace VhrGames.Sdk
         }
     }
 
-    /// <summary>Result envelope for an economy mutation (grant / spend / purchase).</summary>
+    /// <summary>
+    /// Result envelope for an economy mutation (grant / achievement). С SDK 1.9.0
+    /// покупка возвращает <see cref="VhrPurchaseResult"/> (приводится к этому типу
+    /// неявно), а устаревшие <c>SpendAsync</c>/<c>GrantCoinsAsync</c> — этот тип с
+    /// <c>success = false</c> и кодом в <see cref="code"/>.
+    /// </summary>
     [Serializable]
     public sealed class VhrEconomyResult
     {
@@ -82,6 +94,12 @@ namespace VhrGames.Sdk
 
         /// <summary>Human-readable message / error code from the bridge, if any.</summary>
         public string message;
+
+        /// <summary>
+        /// Машиночитаемый код отказа (SDK 1.9.0+), напр. <c>spend_disabled</c>,
+        /// <c>grant_disabled</c>. Пусто при успехе.
+        /// </summary>
+        public string code;
     }
 
     /// <summary>A single leaderboard row.</summary>
@@ -180,14 +198,114 @@ namespace VhrGames.Sdk
         public string message;
     }
 
-    /// <summary>Результат репорта рекламного события (<see cref="IVhrEconomy.ReportAdAsync"/>).</summary>
+    /// <summary>Вид рекламы, которую игра просит показать (см. <see cref="IVhrAds"/>).</summary>
+    public enum VhrAdKind
+    {
+        /// <summary>Полноэкранная реклама в естественной паузе (между уровнями). Без награды.</summary>
+        Interstitial = 0,
+
+        /// <summary>Реклама за награду — только по явному согласию игрока (кнопка «Посмотреть рекламу»).</summary>
+        Rewarded = 1
+    }
+
+    /// <summary>
+    /// Исход показа рекламы (<see cref="IVhrAds.ShowInterstitialAsync"/> /
+    /// <see cref="IVhrAds.ShowRewardedAsync"/>).
+    /// </summary>
+    public enum VhrAdStatus
+    {
+        /// <summary>
+        /// Рекламы сейчас нет: реклама выключена платформой, детский аккаунт,
+        /// блокировщик рекламы, нет подходящего объявления, игра открыта не на
+        /// сайте VHR. Просто продолжайте игру / спрячьте кнопку «за награду».
+        /// Значение по умолчанию (0) — «ничего не показали».
+        /// </summary>
+        Unavailable = 0,
+
+        /// <summary>Rewarded досмотрен — игра выдаёт СВОЮ внутриигровую награду.</summary>
+        Rewarded = 1,
+
+        /// <summary>Реклама была показана и закрыта (для interstitial — обычный исход; для rewarded — закрыли раньше, награды нет).</summary>
+        Closed = 2,
+
+        /// <summary>Сработал частотный лимит (или уже идёт другой показ). Попробуйте позже.</summary>
+        Cooldown = 3,
+
+        /// <summary>Техническая ошибка показа. Игра продолжается как обычно.</summary>
+        Error = 4
+    }
+
+    /// <summary>
+    /// Что возвращает симуляция рекламы в редакторе / не-WebGL сборке
+    /// (<see cref="VhrSdkOptions.AdsSimulation"/>). Позволяет проверить все
+    /// ветки игрового кода без сайта.
+    /// </summary>
+    public enum VhrAdSimulationMode
+    {
+        /// <summary>Реклама «показана»: rewarded → <see cref="VhrAdStatus.Rewarded"/>, interstitial → <see cref="VhrAdStatus.Closed"/>.</summary>
+        Success = 0,
+
+        /// <summary>Реклама «показана», но закрыта раньше: всегда <see cref="VhrAdStatus.Closed"/> (rewarded без награды).</summary>
+        ClosedEarly = 1,
+
+        /// <summary>Сразу <see cref="VhrAdStatus.Unavailable"/> (нет рекламы / адблок).</summary>
+        Unavailable = 2,
+
+        /// <summary>Сразу <see cref="VhrAdStatus.Cooldown"/> (сработал частотный лимит).</summary>
+        Cooldown = 3,
+
+        /// <summary>Сразу <see cref="VhrAdStatus.Error"/>.</summary>
+        Error = 4
+    }
+
+    /// <summary>
+    /// Результат рекламного вызова.
+    /// <para>
+    /// Основное назначение (SDK 1.8.0+): итог показа через <see cref="IVhrAds"/> —
+    /// см. <see cref="Status"/>, <see cref="IsRewarded"/>, <see cref="Kind"/>.
+    /// </para>
+    /// <para>
+    /// Поля <see cref="accepted"/> / <see cref="revenue"/> — наследие устаревшего
+    /// <see cref="IVhrEconomy.ReportAdAsync"/> (ответ сервера, заполняется
+    /// <c>JsonUtility</c>); для нового API они не используются.
+    /// </para>
+    /// </summary>
     [Serializable]
     public sealed class VhrAdResult
     {
-        /// <summary>Принято сервером.</summary>
+        /// <summary>[Устарело, только <see cref="IVhrEconomy.ReportAdAsync"/>] Принято сервером.</summary>
         public bool accepted;
-        /// <summary>Начисленная выручка (в монетах) — считает сервер.</summary>
+        /// <summary>[Устарело, только <see cref="IVhrEconomy.ReportAdAsync"/>] Выручка, которую вернул сервер. Доход по этому пути больше не засчитывается.</summary>
         public long revenue;
+
+        /// <summary>Исход показа.</summary>
+        public VhrAdStatus Status { get; set; }
+
+        /// <summary>Какой вид рекламы запрашивался.</summary>
+        public VhrAdKind Kind { get; set; }
+
+        /// <summary>Id запроса показа (для логов/сопоставления с <see cref="IVhrAds.OnAdOpened"/>).</summary>
+        public string RequestId { get; set; }
+
+        /// <summary>
+        /// Машиночитаемая причина для логов (напр. <c>"busy"</c>, <c>"not_hosted"</c>,
+        /// <c>"host_timeout"</c>, <c>"simulated"</c>). Может быть <c>null</c>.
+        /// Не стройте на ней игровую логику — ориентируйтесь на <see cref="Status"/>.
+        /// </summary>
+        public string Reason { get; set; }
+
+        /// <summary>
+        /// <c>true</c> — rewarded засчитан, игра может выдать свою внутриигровую
+        /// награду. Платформенные монеты за рекламу НЕ начисляются.
+        /// </summary>
+        public bool IsRewarded => Status == VhrAdStatus.Rewarded;
+
+        /// <summary><c>true</c>, если реклама действительно была на экране (<see cref="VhrAdStatus.Rewarded"/> или <see cref="VhrAdStatus.Closed"/>).</summary>
+        public bool WasShown => Status == VhrAdStatus.Rewarded || Status == VhrAdStatus.Closed;
+
+        /// <inheritdoc />
+        public override string ToString() =>
+            $"VhrAdResult({Kind}: {Status}{(string.IsNullOrEmpty(Reason) ? "" : ", " + Reason)})";
     }
 
     /// <summary>Турнир платформы.</summary>

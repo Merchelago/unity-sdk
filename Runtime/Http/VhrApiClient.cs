@@ -13,8 +13,9 @@ namespace VhrGames.Sdk
     /// <see cref="VhrSdkException"/>.
     /// <para>
     /// Авторизация: всегда шлём <c>Authorization: Bearer &lt;token&gt;</c>, когда
-    /// <see cref="VhrSdkOptions.TokenProvider"/> вернул непустой токен (JWT
-    /// игрока — основной путь для клиентских WebGL-сборок).
+    /// <see cref="VhrSdkOptions.TokenProvider"/> вернул непустой токен (на
+    /// платформе — игровой токен игрока от хоста, audience <c>…#game</c>, 60 мин;
+    /// в Unity Editor в режиме LiveSandbox — песочный ключ из окна VHR).
     /// <c>X-Internal-Api-Key</c> добавляется ТОЛЬКО если
     /// <see cref="VhrSdkOptions.InternalApiKey"/> непуст (серверный сценарий);
     /// пустой заголовок не отправляется.
@@ -86,6 +87,10 @@ namespace VhrGames.Sdk
         {
             string json = body == null ? null : JsonUtility.ToJson(body);
 
+            // WebGL: игровой токен живёт 60 мин и обновляется хостом. Если он уже
+            // истёк/вот-вот истечёт — попросим свежий ДО запроса (без лишнего 401).
+            await EnsureFreshTokenAsync(ct);
+
             var headers = BuildHeaders();
             headers.TryGetValue("Authorization", out var usedAuth);
 
@@ -112,10 +117,93 @@ namespace VhrGames.Sdk
                 throw new VhrSdkException(
                     MapErrorCode(resp.StatusCode),
                     $"{method} {absoluteUrl} failed: {resp.Error} (status {resp.StatusCode}) body={resp.Body}",
-                    resp.StatusCode);
+                    resp.StatusCode,
+                    TryReadServerCode(resp.Body),
+                    resp.Body);
             }
 
             return string.IsNullOrWhiteSpace(resp.Body) ? null : resp.Body;
+        }
+
+        /// <summary>
+        /// Достаёт <c>code</c> из JSON-тела ошибки моста (<c>{ "code": "...", "message": "..." }</c>).
+        /// <c>null</c>, если тела нет или это не такой JSON.
+        /// </summary>
+        internal static string TryReadServerCode(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body)) return null;
+            var t = body.TrimStart();
+            if (t.Length == 0 || t[0] != '{') return null;
+            try
+            {
+                // Чистый C#-разбор (без JsonUtility): верхнеуровневое поле "code".
+                var code = VhrJwt.ReadClaim(t, "code");
+                return string.IsNullOrWhiteSpace(code) ? null : code.Trim();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        // ---- проактивное обновление игрового токена (WebGL) ----
+
+        // Токен, для которого уже ждали обновления (чтобы при сбитых часах браузера
+        // не ждать на каждом запросе), и время последнего фонового запроса.
+        private string _staleTokenWaited;
+        private DateTime _lastProactiveRefreshUtc = DateTime.MinValue;
+
+        /// <summary>
+        /// Только WebGL. Если игровой токен истекает в ближайшие 5 минут — фоново
+        /// просит у хоста свежий (<c>vhr:sdk:token-request</c>, не чаще раза в 30 с).
+        /// Если он уже истёк (или истечёт в ближайшие 30 с) — просит и ждёт новый до
+        /// ~3 с, но не больше одного раза на конкретный токен. Сломать запрос не может:
+        /// при любой неудаче запрос уходит как есть, а 401 обработает
+        /// <see cref="TryRefreshTokenAsync"/>.
+        /// </summary>
+        private async Task EnsureFreshTokenAsync(CancellationToken ct)
+        {
+            if (!VhrWebGlTokenChannel.IsSupported) return;
+            var provider = _options.TokenProvider;
+            if (provider == null) return;
+
+            string token;
+            try { token = provider.Invoke(); }
+            catch { return; }
+            if (string.IsNullOrEmpty(token) || !VhrJwt.TryGetExpiry(token, out var exp)) return;
+
+            var left = exp - DateTimeOffset.UtcNow;
+            if (left > TimeSpan.FromMinutes(5)) return;
+
+            if (left > TimeSpan.FromSeconds(30))
+            {
+                if (DateTime.UtcNow - _lastProactiveRefreshUtc < TimeSpan.FromSeconds(30)) return;
+                _lastProactiveRefreshUtc = DateTime.UtcNow;
+                try { VhrWebGlTokenChannel.RequestRefresh(); } catch { /* деградируем тихо */ }
+                _log?.Verbose("[VHR HTTP] игровой токен скоро истечёт — запросили свежий у хоста");
+                return;
+            }
+
+            if (_staleTokenWaited == token) return;
+            _staleTokenWaited = token;
+            _lastProactiveRefreshUtc = DateTime.UtcNow;
+            try { VhrWebGlTokenChannel.RequestRefresh(); } catch { return; }
+
+            for (int i = 0; i < 12; i++) // ~3 с (12 × 0.25 с)
+            {
+                try { await Awaitable.WaitForSecondsAsync(0.25f, ct); }
+                catch (OperationCanceledException) { return; }
+
+                string fresh;
+                try { fresh = provider.Invoke(); }
+                catch { return; }
+                if (!string.IsNullOrEmpty(fresh) && fresh != token)
+                {
+                    _log?.Verbose("[VHR HTTP] истёкший игровой токен заменён свежим до запроса");
+                    return;
+                }
+            }
+            _log?.Warn("[VHR HTTP] игровой токен истёк, а хост не прислал новый за 3 с — запрос уйдёт как есть");
         }
 
         /// <summary>Builds the standard header set, evaluating the lazy token provider.</summary>
@@ -213,6 +301,8 @@ namespace VhrGames.Sdk
             403 => "forbidden",
             404 => "not_found",
             409 => "conflict",
+            426 => "sdk_update_required",
+            429 => "rate_limited",
             501 => "not_implemented",
             0 => "connection_error",
             _ => "http_error"
