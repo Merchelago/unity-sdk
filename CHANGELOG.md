@@ -1,7 +1,53 @@
 # Изменения
 
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
-Проект следует [Semantic Versioning](https://semver.org/).
+Проект следует [Semantic Versioning](https://semver.org/). Как выпускаются версии — [RELEASING.md](RELEASING.md).
+
+## [1.10.0] - 2026-10-06
+
+### Добавлено — установка в один шаг
+- **Установщик одним файлом** `Installer~/VhrSdkInstaller.cs` (он же на сайте:
+  `https://vhrgames.ru/downloads/VhrSdkInstaller.cs`). Положите его в `Assets/Editor/` — он узнает у
+  сервера последнюю версию (нет связи — ставит встроенную), добавит в `Packages/manifest.json`
+  недостающие реестры **OpenUPM** (`com.cysharp`, `jp.hadashikick`) и **UnityNuGet** (`org.nuget`) и
+  зависимости `ru.vhrgames.sdk` (git, `#v<версия>`), R3, VContainer и ядро R3; найдёт копии ядра R3 из
+  NuGetForUnity / `Assets/Plugins` и предложит удалить их (вместе с записями в `packages.config`);
+  разрешит пакеты, покажет итог и удалит сам себя. Чужие записи, порядок и форматирование
+  `manifest.json` сохраняются, копия прежнего файла — в `Library/VhrSdkInstaller/`. Повторный запуск
+  ничего не дублирует (меню `VHR → Установить SDK`). Зависимостей от SDK, R3 и VContainer у файла нет.
+
+### Изменено — ядро R3 теперь ставится через UPM, без NuGetForUnity
+- Новая зависимость пакета **`org.nuget.r3` 1.2.9** (реестр UnityNuGet,
+  `https://unitynuget-registry.openupm.com`). Она сама подтягивает `org.nuget.microsoft.bcl.timeprovider`
+  8.0.0, `org.nuget.microsoft.bcl.asyncinterfaces` 6.0.0, `org.nuget.system.threading.channels` 8.0.0,
+  `org.nuget.system.componentmodel.annotations` 5.0.0, `org.nuget.system.runtime.compilerservices.unsafe`
+  6.0.0 и др. — ровно те DLL, которых ждёт `R3.Unity` (`com.cysharp.r3`). Нужны оба реестра в
+  `manifest.json` проекта (установщик добавит их сам).
+- ⚠️ **Если R3 стоял через NuGetForUnity или в `Assets/Plugins`** — эти копии нужно убрать, иначе
+  «Multiple precompiled assemblies with the same name R3.dll». Проще всего — запустить установщик.
+
+### Добавлено — обновление в один клик
+- **Окно `VHR → Обновление SDK`**: установленная версия и источник (git / реестр / embedded / local),
+  последняя и минимальная поддерживаемая версии, «Что нового» (из CHANGELOG), устаревшие API, которые
+  встречаются в `Assets/**/*.cs` (с переходом к строке), состояние зависимостей и реестров. Кнопка
+  **«Обновить до X»**: добавляет недостающие реестры, поднимает прибитые в `manifest.json` зависимости и
+  переключает SDK на новый тег — одним запросом `Client.AddAndRemove` (одна перезагрузка домена,
+  атомарно). Итог сообщает уже новая версия SDK после перекомпиляции. Для embedded/local — инструкция.
+- **Автопроверка при запуске редактора**: не чаще раза в сутки, асинхронно. Вышла новая версия — одно
+  предупреждение в консоль (для каждой версии один раз). Версия ниже `minSupported` — ошибка в консоль и
+  диалог «Загрузка игры на платформу будет отклонена — обновить сейчас?».
+- **Проверка при WebGL-сборке** (`VhrSdkVersionBuildGuard`): SDK ниже `minSupported` — сборка
+  останавливается с подсказкой «VHR → Обновление SDK» (платформа всё равно отклонила бы загрузку,
+  `sdk_outdated`); ниже последней — предупреждение. Офлайн — не мешает.
+- Источник данных — `GET https://api.vhrweb.ru/games/api/Sdk/versions` (анонимно); ответ кэшируется в
+  `EditorPrefs`. Сервер недоступен — работа и сборка продолжаются без проверок и без спама в консоль.
+- В окне `VHR → Тестирование в Editor` — версия SDK и кнопка «Обновление SDK…».
+
+### Выпуск версий
+- `.github/workflows/release.yml`: на push тега `v*` — проверка (`.github/scripts/check-release.mjs`:
+  версия в `package.json` и `VhrSdk.SdkVersion` = тег, раздел в CHANGELOG, `.meta` у каждого файла и
+  папки, уникальные GUID, совпадение ядра установщика с Editor-копией) и GitHub Release с текстом
+  раздела CHANGELOG. Правила SemVer и устаревания — `RELEASING.md`.
 
 ## [1.9.0] - 2026-10-04
 

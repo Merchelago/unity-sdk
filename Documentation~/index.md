@@ -65,8 +65,13 @@ Unity пакует StreamingAssets ──► Build/StreamingAssets/vhr-sdk.json
 
 ## 3. Установка
 
-R3 и VContainer внешние (OpenUPM). Точные шаги по реестру/скоупам — в корневом
-[README](../README.md#установка).
+Проще всего — установщиком одним файлом `Installer~/VhrSdkInstaller.cs`
+(`https://vhrgames.ru/downloads/VhrSdkInstaller.cs`): положите его в `Assets/Editor/`, он добавит
+реестры OpenUPM (`com.cysharp`, `jp.hadashikick`) и UnityNuGet (`org.nuget`) и зависимости. R3
+(`com.cysharp.r3` + ядро `org.nuget.r3`) и VContainer — зависимости пакета, ставятся через UPM
+автоматически. Ручные шаги — в корневом [README](../README.md#установка), обновление —
+[README → Обновление SDK](../README.md#обновление-sdk) (окно `VHR → Обновление SDK`, данные —
+анонимный `GET {API}/games/api/Sdk/versions`).
 
 ## 3a. Где взять данные и как работает авторизация
 

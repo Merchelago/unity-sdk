@@ -1,8 +1,8 @@
 {
   "name": "ru.vhrgames.sdk",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "displayName": "VHR Games SDK",
-  "description": "Mandatory VHR Games SDK for Unity 6 WebGL titles. Provides player profile + name resolution, friends, player stats/progression, achievements, game sessions, economy (game catalog items, inventory, purchases confirmed by the player in the VHR platform window; no in-game top-up, spend or grant), in-game ads (interstitial/rewarded via the VHR host page, Yandex Advertising Network), leaderboard, tournaments, lobby/matchmaking + relay multiplayer, server matchmaking (UDP, domain/uuid) and session services that talk to the VHR backend, plus a build marker handshake (vhr-sdk.json) that the backend validates on upload, and Unity Editor testing of every API against the real backend with a sandbox key (VHR menu: Editor testing and Game catalog windows). Builds without this SDK are rejected on confirm-upload.",
+  "description": "Mandatory VHR Games SDK for Unity 6 WebGL titles. Provides player profile + name resolution, friends, player stats/progression, achievements, game sessions, economy (game catalog items, inventory, purchases confirmed by the player in the VHR platform window; no in-game top-up, spend or grant), in-game ads (interstitial/rewarded via the VHR host page, Yandex Advertising Network), leaderboard, tournaments, lobby/matchmaking + relay multiplayer, server matchmaking (UDP, domain/uuid) and session services that talk to the VHR backend, plus a build marker handshake (vhr-sdk.json) that the backend validates on upload, and Unity Editor testing of every API against the real backend with a sandbox key (VHR menu: Editor testing and Game catalog windows). One-file installer (Installer~/VhrSdkInstaller.cs) and one-click updates (VHR menu: SDK update window, daily version check, WebGL build guard against SDK versions below the platform minimum). Builds without this SDK are rejected on confirm-upload.",
   "unity": "6000.0",
   "documentationUrl": "https://github.com/Merchelago/unity-sdk",
   "changelogUrl": "https://github.com/Merchelago/unity-sdk/blob/main/CHANGELOG.md",
@@ -15,7 +15,8 @@
     "purchases",
     "sandbox",
     "leaderboard",
-    "webgl"
+    "webgl",
+    "updater"
   ],
   "author": {
     "name": "VHR Games",
@@ -23,15 +24,23 @@
   },
   "dependencies": {
     "com.cysharp.r3": "1.2.9",
-    "jp.hadashikick.vcontainer": "1.16.0"
+    "jp.hadashikick.vcontainer": "1.16.0",
+    "org.nuget.r3": "1.2.9"
   },
   "scopedRegistries": [
     {
       "name": "OpenUPM",
       "url": "https://package.openupm.com",
       "scopes": [
-        "com.cysharp.r3",
-        "jp.hadashikick.vcontainer"
+        "com.cysharp",
+        "jp.hadashikick"
+      ]
+    },
+    {
+      "name": "UnityNuGet",
+      "url": "https://unitynuget-registry.openupm.com",
+      "scopes": [
+        "org.nuget"
       ]
     }
   ],
@@ -42,5 +51,5 @@
       "path": "Samples~/Basic"
     }
   ],
-  "_vhr_install_note": "R3 and VContainer are NOT bundled. Add the OpenUPM scoped registry (https://package.openupm.com) with scopes com.cysharp.r3 and jp.hadashikick.vcontainer, then install 'R3' (com.cysharp.r3) and 'VContainer' (jp.hadashikick.vcontainer) via Package Manager. R3 additionally requires the NuGet 'System.Reactive' / 'R3' core DLLs via NuGetForUnity or the unitypackage from the R3 repo. See README.md > Installation."
+  "_vhr_install_note": "Unity ignores scopedRegistries in a package manifest: they must be in the PROJECT Packages/manifest.json. Easiest: drop Installer~/VhrSdkInstaller.cs (https://vhrgames.ru/downloads/VhrSdkInstaller.cs) into Assets/Editor - it adds both registries (OpenUPM: com.cysharp, jp.hadashikick; UnityNuGet: org.nuget) and the dependencies. Then R3 (com.cysharp.r3), its core DLLs (org.nuget.r3 + transitive org.nuget.*) and VContainer resolve automatically - no NuGetForUnity. See README.md > Installation."
 }

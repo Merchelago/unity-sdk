@@ -1,0 +1,49 @@
+# Выпуск версии SDK: push тега vX.Y.Z → проверка → GitHub Release с текстом раздела CHANGELOG.
+# Сервер VHR сам увидит новую версию (теги/релизы этого репозитория) и покажет её в Unity
+# (окно «VHR → Обновление SDK» и автопроверка). Порядок выпуска — RELEASING.md.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Проверка (версии, CHANGELOG, .meta, GUID, ядро установщика)
+        run: >
+          node .github/scripts/check-release.mjs
+          --tag "$GITHUB_REF_NAME"
+          --notes-out "$RUNNER_TEMP/release-notes.md"
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          EXTRA=()
+          case "$VERSION" in *-*) EXTRA+=(--prerelease) ;; esac
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "VHR Games SDK $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" "${EXTRA[@]}"
+          else
+            gh release create "$TAG" --verify-tag --title "VHR Games SDK $VERSION" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" "${EXTRA[@]}"
+          fi
+          echo "Релиз: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}" >> "$GITHUB_STEP_SUMMARY"

@@ -85,6 +85,14 @@ namespace VhrGames.Sdk.Editor
             }
 
             EditorGUILayout.Space(8);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField($"VHR SDK {VhrSdk.SdkVersion}", EditorStyles.miniLabel);
+                if (GUILayout.Button("Обновление SDK…", EditorStyles.miniButton, GUILayout.Width(130)))
+                    VhrSdkUpdateWindow.Open();
+            }
+
+            EditorGUILayout.Space(8);
             EditorGUILayout.EndScrollView();
         }
 

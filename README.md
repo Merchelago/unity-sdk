@@ -27,7 +27,7 @@
 | Результат бэкенда на confirm-upload | Причина | Решение |
 |---|---|---|
 | `sdk_required` | В сборке нет `vhr-sdk.json` | Установите этот пакет — он сам пишет маркер при сборке |
-| `sdk_outdated` | Версия `sdkVersion` в маркере ниже минимума бэкенда | Обновите пакет и пересоберите |
+| `sdk_outdated` | Версия `sdkVersion` в маркере ниже минимума бэкенда (`minSupported`) | `VHR → Обновление SDK` → «Обновить», затем пересоберите (см. [Обновление SDK](#обновление-sdk)) |
 
 Полный контракт маркера и справочник API — в
 [Documentation~/index.md](Documentation~/index.md).
@@ -279,41 +279,105 @@ bool boss = mine.Any(u => u.achievement?.code == VhrCatalogIds.Achievements.Firs
 
 ## Установка
 
-Пакет **не** содержит R3 и VContainer. Установите их первыми.
+SDK зависит от **R3** (`com.cysharp.r3` + ядро `org.nuget.r3`) и **VContainer**
+(`jp.hadashikick.vcontainer`). Всё ставится через Package Manager из двух реестров — OpenUPM и
+UnityNuGet; NuGetForUnity и `.unitypackage` больше не нужны.
 
-### 1. Добавьте scoped-реестр OpenUPM
+### Вариант 1 — установщик одним файлом (рекомендуется)
 
-`Edit ▸ Project Settings ▸ Package Manager ▸ Scoped Registries`:
+1. Скачайте [`VhrSdkInstaller.cs`](https://vhrgames.ru/downloads/VhrSdkInstaller.cs) (он же в
+   репозитории — [`Installer~/VhrSdkInstaller.cs`](Installer~/VhrSdkInstaller.cs), кнопка «Raw»).
+2. Перетащите файл в проект, в `Assets/Editor/` (подойдёт любая папка внутри `Assets`).
+3. Unity скомпилирует его и спросит «Установить?» — нажмите **«Установить»**.
+
+Установщик сам:
+- узнаёт у сервера VHR последнюю версию SDK (нет связи — ставит встроенную в него версию);
+- добавляет в `Packages/manifest.json` недостающие реестры **OpenUPM** и **UnityNuGet** и зависимости:
+  SDK (git, `#v<версия>`), R3, ядро R3, VContainer. Чужие записи, их порядок и форматирование файла не
+  трогает; копию прежнего файла кладёт в `Library/VhrSdkInstaller/`;
+- находит копии R3 от NuGetForUnity / в `Assets/Plugins` и предлагает удалить их — иначе будут дубли
+  сборок («Multiple precompiled assemblies with the same name R3.dll»);
+- ждёт, пока Unity скачает пакеты, показывает итог и предлагает удалить себя — он больше не нужен.
+
+Запустить ещё раз — меню **`VHR → Установить SDK`**: повторный запуск ничего не дублирует. Так же
+переводится на новую схему проект, где SDK ≤ 1.9 и R3 стоят через NuGetForUnity.
+
+### Вариант 2 — вручную
+
+**1. Два реестра** — `Edit ▸ Project Settings ▸ Package Manager ▸ Scoped Registries` (или
+`scopedRegistries` в `Packages/manifest.json` проекта — в package.json самого пакета Unity это поле
+игнорирует):
+
+| Name | URL | Scopes |
+|---|---|---|
+| OpenUPM | `https://package.openupm.com` | `com.cysharp`, `jp.hadashikick` |
+| UnityNuGet | `https://unitynuget-registry.openupm.com` | `org.nuget` |
+
+**2. SDK по git URL** — `Package Manager ▸ + ▸ Add package from git URL…`:
 
 ```
-Name:   OpenUPM
-URL:    https://package.openupm.com
-Scopes: com.cysharp.r3
-        jp.hadashikick.vcontainer
+https://github.com/Merchelago/unity-sdk.git#v1.10.0
 ```
 
-### 2. Установите зависимости (Package Manager ▸ My Registries)
-
-- **VContainer** — `jp.hadashikick.vcontainer`
-- **R3** — `com.cysharp.r3`
-  R3 также нужны его core managed-DLL (`R3`, `ObservableCollections`,
-  `System.Threading.Channels`, ...). Установите их через **NuGetForUnity**
-  (пакет `R3`) или из `.unitypackage` со страницы релизов R3 — по инструкции R3.
-  Для интеграции с Unity также добавьте `R3.Unity` (идёт в составе UPM-пакета R3).
-
-### 3. Установите этот SDK
-
-`Package Manager ▸ + ▸ Add package from git URL…`:
-
-```
-https://github.com/Merchelago/unity-sdk.git#v1.9.0
-```
-
-или добавьте в `Packages/manifest.json`:
+R3, его ядро и VContainer подтянутся сами как зависимости SDK. Итоговый `Packages/manifest.json`:
 
 ```json
-"ru.vhrgames.sdk": "https://github.com/Merchelago/unity-sdk.git#v1.9.0"
+{
+  "dependencies": {
+    "ru.vhrgames.sdk": "https://github.com/Merchelago/unity-sdk.git#v1.10.0"
+  },
+  "scopedRegistries": [
+    { "name": "OpenUPM", "url": "https://package.openupm.com", "scopes": ["com.cysharp", "jp.hadashikick"] },
+    { "name": "UnityNuGet", "url": "https://unitynuget-registry.openupm.com", "scopes": ["org.nuget"] }
+  ]
+}
 ```
+
+> **Был R3 из NuGetForUnity или в `Assets/Plugins`?** Удалите эти копии (`Assets/Packages/R3.*`,
+> `Microsoft.Bcl.TimeProvider.*`, `Microsoft.Bcl.AsyncInterfaces.*`, `System.Threading.Channels.*`,
+> `System.ComponentModel.Annotations.*`, `System.Runtime.CompilerServices.Unsafe.*`, `Assets/Plugins/R3`)
+> и строки о них в `Assets/packages.config` — ядро теперь даёт пакет `org.nuget.r3`. Установщик делает
+> это сам.
+
+| Пакет | Версия | Реестр |
+|---|---|---|
+| `com.cysharp.r3` (R3.Unity) | 1.2.9 | OpenUPM |
+| `org.nuget.r3` (ядро R3) + транзитивные `org.nuget.microsoft.bcl.timeprovider` 8.0.0, `org.nuget.microsoft.bcl.asyncinterfaces` 6.0.0, `org.nuget.system.threading.channels` 8.0.0, `org.nuget.system.componentmodel.annotations` 5.0.0, `org.nuget.system.runtime.compilerservices.unsafe` 6.0.0 и др. | 1.2.9 | UnityNuGet |
+| `jp.hadashikick.vcontainer` | 1.16.0 | OpenUPM |
+
+---
+
+## Обновление SDK
+
+Меню **`VHR → Обновление SDK`** — всё в одном окне:
+
+- установленная версия и откуда она (git / реестр / встроенная папка / локальная), последняя и
+  **минимальная поддерживаемая** версии;
+- «Что нового» — раздел CHANGELOG последней версии;
+- устаревшие API, которые встречаются в вашем коде (`Assets/**/*.cs`), с переходом к строке;
+- зависимости и реестры — что поднимется вместе с обновлением;
+- кнопка **«Обновить до X»**: добавит недостающие реестры, поднимет зависимости, прибитые в
+  `manifest.json` ниже нужной версии, и переключит SDK на новый тег — одним запросом. Редактор не
+  блокируется; после перекомпиляции новая версия SDK сама покажет итог. Если SDK лежит в `Packages/`
+  папкой или подключён через `file:`, окно покажет, что сделать вручную.
+
+**Автопроверка.** При запуске редактора SDK раз в сутки сверяется с сервером VHR. Вышла новая версия —
+одно предупреждение в консоли (на каждую версию один раз). Сервер недоступен — тишина, всё работает.
+
+**`minSupported`** — версия SDK, ниже которой платформа **не примет новую сборку** игры
+(`sdk_outdated` при загрузке). Если ваша версия ниже, редактор покажет ошибку и предложит обновиться,
+а WebGL-сборка остановится с подсказкой «VHR → Обновление SDK». Если версия просто не последняя —
+сборка пройдёт с предупреждением. `minSupported` поднимается редко — только ради безопасности или денег
+и с анонсом заранее.
+
+**Старые сборки продолжают работать.** Уже опубликованная игра не ломается от выхода новой версии SDK.
+Новая версия попадёт к игрокам, когда вы пересоберёте игру и загрузите сборку на платформу.
+
+Вручную (без окна) — поменяйте тег в `Packages/manifest.json`:
+`"ru.vhrgames.sdk": "https://github.com/Merchelago/unity-sdk.git#v<новая версия>"`. Если там же
+прямо указаны `com.cysharp.r3`, `org.nuget.r3` или `jp.hadashikick.vcontainer` (их добавляет
+установщик), поднимите их до версий из CHANGELOG: версия, указанная в проекте, важнее требований
+пакета. Окно обновления делает это само.
 
 ---
 
@@ -542,7 +606,8 @@ var options = new VhrSdkOptions
 
 Меню Editor: **`VHR → Тестирование в Editor`** (песочный ключ, Simulation / Live,
 проверка API, сброс), **`VHR → Каталог игры`** (товары и достижения, генерация
-`VhrCatalogIds.cs`), `VHR → Собрать серверный билд`.
+`VhrCatalogIds.cs`), **`VHR → Обновление SDK`** (версии, что нового, обновление одной кнопкой),
+`VHR → Собрать серверный билд`.
 
 Полные форматы запросов/ответов: [Documentation~/index.md](Documentation~/index.md).
 
