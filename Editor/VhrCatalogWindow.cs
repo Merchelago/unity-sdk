@@ -463,10 +463,30 @@ namespace VhrGames.Sdk.Editor
             return sb.ToString();
         }
 
-        private static string Escape(string s) => (s ?? string.Empty).Replace("\\", "\\\\").Replace("\"", "\\\"");
+        // Конец строки в C# — не только \r и \n, но и U+0085, U+2028, U+2029: название товара
+        // с таким символом вышло бы из «///»-комментария, и его хвост стал бы кодом проекта.
+        private static bool IsLineBreakOrControl(char c) =>
+            c < ' ' || c == (char)0x7F || c == (char)0x85 || c == (char)0x2028 || c == (char)0x2029;
 
-        private static string Xml(string s) =>
-            (s ?? string.Empty).Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;")
-            .Replace('\n', ' ').Replace('\r', ' ');
+        private static string Escape(string s)
+        {
+            var sb = new StringBuilder();
+            foreach (var c in s ?? string.Empty)
+            {
+                if (c == '\\') sb.Append("\\\\");
+                else if (c == '"') sb.Append("\\\"");
+                else if (IsLineBreakOrControl(c)) sb.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
+                else sb.Append(c);
+            }
+            return sb.ToString();
+        }
+
+        private static string Xml(string s)
+        {
+            var sb = new StringBuilder();
+            foreach (var c in s ?? string.Empty)
+                sb.Append(IsLineBreakOrControl(c) ? ' ' : c);
+            return sb.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").ToString();
+        }
     }
 }

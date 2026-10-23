@@ -95,6 +95,15 @@ namespace VhrGames.Sdk
         private static readonly Dictionary<int, WebGLWebRtc> Instances =
             new Dictionary<int, WebGLWebRtc>();
 
+        // Делегаты колбэков — в СТАТИЧЕСКИХ полях, как в WebGLVhrSocket (v1.7.5) и мостах
+        // рекламы/экономики: временный делегат из method-group GC может собрать, и
+        // указатель в JS станет висячим.
+        private static readonly OpenCb s_onOpen = OnOpenStatic;
+        private static readonly DataCb s_onData = OnDataStatic;
+        private static readonly StringCb s_onAnswer = OnAnswerStatic;
+        private static readonly StringCb s_onIce = OnIceStatic;
+        private static readonly ErrorCb s_onError = OnErrorStatic;
+
         private int _id;
         private bool _disposed;
         private TaskCompletionSource<bool> _openTcs;
@@ -117,9 +126,10 @@ namespace VhrGames.Sdk
             if (_id != 0)
                 return IsOpen;
 
-            _openTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var openTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _openTcs = openTcs;
 
-            _id = VhrRtc_Start(OnOpenStatic, OnDataStatic, OnAnswerStatic, OnIceStatic, OnErrorStatic);
+            _id = VhrRtc_Start(s_onOpen, s_onData, s_onAnswer, s_onIce, s_onError);
             if (_id == 0)
             {
                 // WebRTC недоступен в этом браузере — сразу fallback.
@@ -128,14 +138,25 @@ namespace VhrGames.Sdk
 
             Instances[_id] = this;
 
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(timeout);
-            using (timeoutCts.Token.Register(() => _openTcs?.TrySetResult(false)))
+            // Таймаут — по кадрам (VhrAsync), а не CancelAfter: на WebGL нет таймерного
+            // потока, CancelAfter не срабатывает, и без открытия канала StartAsync (а с ним
+            // VhrRelay.ConnectAsync) висел бы вечно. И БЕЗ ConfigureAwait(false): на WebGL
+            // нет тредпула — продолжение не выполнилось бы никогда (см. CHANGELOG 1.7.6).
+            var stop = new CancellationTokenSource();
+            _ = VhrAsync.WatchdogAsync((float)timeout.TotalSeconds, stop.Token, () => openTcs.TrySetResult(false));
+            using (ct.Register(() => openTcs.TrySetResult(false)))
             {
-                bool opened;
-                try { opened = await _openTcs.Task.ConfigureAwait(false); }
-                catch { opened = false; }
-                return opened && IsOpen;
+                try
+                {
+                    bool opened;
+                    try { opened = await openTcs.Task; }
+                    catch { opened = false; }
+                    return opened && IsOpen;
+                }
+                finally
+                {
+                    stop.Cancel();
+                }
             }
         }
 

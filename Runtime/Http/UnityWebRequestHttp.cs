@@ -52,6 +52,10 @@ namespace VhrGames.Sdk
 
             _log?.Verbose($"[VHR HTTP] {method} {url}");
 
+            // Страховочный дедлайн по реальному времени поверх req.timeout: ответ не
+            // ждём дольше timeout + 5 с, даже если браузер/платформа timeout не применили.
+            var deadline = Time.realtimeSinceStartup + req.timeout + 5f;
+
             try
             {
                 var op = req.SendWebRequest();
@@ -61,6 +65,12 @@ namespace VhrGames.Sdk
                     {
                         req.Abort();
                         return new VhrHttpResponse(0, null, false, "canceled");
+                    }
+                    if (Time.realtimeSinceStartup > deadline)
+                    {
+                        req.Abort();
+                        _log?.Verbose($"[VHR HTTP] {method} {url}: нет ответа за {req.timeout} с — запрос прерван");
+                        return new VhrHttpResponse(0, null, false, "timeout");
                     }
                     // Yield a frame. Awaitable.NextFrameAsync exists in Unity 6.
                     await Awaitable.NextFrameAsync(ct);

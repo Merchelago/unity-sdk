@@ -191,7 +191,9 @@ namespace VhrGames.Sdk
 
             for (int i = 0; i < 12; i++) // ~3 с (12 × 0.25 с)
             {
-                try { await Awaitable.WaitForSecondsAsync(0.25f, ct); }
+                // По реальному времени: при Time.timeScale = 0 (пауза, авто-пауза рекламы)
+                // WaitForSecondsAsync не завершился бы — запрос завис бы до снятия паузы.
+                try { await VhrAsync.DelayRealtimeAsync(0.25f, ct); }
                 catch (OperationCanceledException) { return; }
 
                 string fresh;
@@ -287,7 +289,7 @@ namespace VhrGames.Sdk
                     return false;
                 }
 
-                try { await Awaitable.WaitForSecondsAsync(0.5f, ct); }
+                try { await VhrAsync.DelayRealtimeAsync(0.5f, ct); }
                 catch (OperationCanceledException) { return false; }
             }
 
@@ -312,4 +314,51 @@ namespace VhrGames.Sdk
     /// <summary>Marker type for endpoints with no meaningful response body.</summary>
     [Serializable]
     public sealed class VhrVoid { }
+
+    /// <summary>
+    /// Ожидания SDK — только по кадрам Unity и реальному времени. На WebGL нет тредпула и
+    /// таймерного потока: <c>Task.Delay</c>, <c>CancellationTokenSource.CancelAfter</c> и
+    /// <c>new CancellationTokenSource(TimeSpan)</c> там не срабатывают, а
+    /// <see cref="Awaitable.WaitForSecondsAsync(float, CancellationToken)"/> идёт по
+    /// масштабируемому времени и стоит при <c>Time.timeScale = 0</c> (пауза игры, авто-пауза рекламы).
+    /// Вызывать с главного потока.
+    /// </summary>
+    internal static class VhrAsync
+    {
+        /// <summary>Пауза по реальному времени. При отмене <paramref name="ct"/> — <see cref="OperationCanceledException"/>.</summary>
+        internal static async Task DelayRealtimeAsync(float seconds, CancellationToken ct = default)
+        {
+            var end = Time.realtimeSinceStartup + Mathf.Max(0f, seconds);
+            do
+            {
+                ct.ThrowIfCancellationRequested();
+                await Awaitable.NextFrameAsync(ct);
+            }
+            while (Time.realtimeSinceStartup < end);
+        }
+
+        /// <summary>
+        /// Сторож таймаута: через <paramref name="seconds"/> реального времени вызывает
+        /// <paramref name="onTimeout"/>, если раньше не отменён <paramref name="stop"/>.
+        /// Когда ожидание завершилось, вызовите <c>Cancel()</c> у источника <paramref name="stop"/>.
+        /// </summary>
+        internal static async Task WatchdogAsync(float seconds, CancellationToken stop, Action onTimeout)
+        {
+            try
+            {
+                await DelayRealtimeAsync(seconds, stop);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
+            if (stop.IsCancellationRequested) return;
+            try { onTimeout?.Invoke(); }
+            catch (Exception e) { Debug.LogException(e); }
+        }
+    }
 }

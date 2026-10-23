@@ -1,6 +1,6 @@
 {
   "name": "ru.vhrgames.sdk",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "displayName": "VHR Games SDK",
   "description": "Mandatory VHR Games SDK for Unity 6 WebGL titles. Provides player profile + name resolution, friends, player stats/progression, achievements, game sessions, economy (game catalog items, inventory, purchases confirmed by the player in the VHR platform window; no in-game top-up, spend or grant), in-game ads (interstitial/rewarded via the VHR host page, Yandex Advertising Network), leaderboard, tournaments, lobby/matchmaking + relay multiplayer, server matchmaking (UDP, domain/uuid) and session services that talk to the VHR backend, plus a build marker handshake (vhr-sdk.json) that the backend validates on upload, and Unity Editor testing of every API against the real backend with a sandbox key (VHR menu: Editor testing and Game catalog windows). One-file installer (Installer~/VhrSdkInstaller.cs) and one-click updates (VHR menu: SDK update window, daily version check, WebGL build guard against SDK versions below the platform minimum). Builds without this SDK are rejected on confirm-upload.",
   "unity": "6000.0",

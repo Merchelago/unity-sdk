@@ -316,7 +316,7 @@ UnityNuGet; NuGetForUnity и `.unitypackage` больше не нужны.
 **2. SDK по git URL** — `Package Manager ▸ + ▸ Add package from git URL…`:
 
 ```
-https://github.com/Merchelago/unity-sdk.git#v1.10.0
+https://github.com/Merchelago/unity-sdk.git#v1.10.1
 ```
 
 R3, его ядро и VContainer подтянутся сами как зависимости SDK. Итоговый `Packages/manifest.json`:
@@ -324,7 +324,7 @@ R3, его ядро и VContainer подтянутся сами как зави�
 ```json
 {
   "dependencies": {
-    "ru.vhrgames.sdk": "https://github.com/Merchelago/unity-sdk.git#v1.10.0"
+    "ru.vhrgames.sdk": "https://github.com/Merchelago/unity-sdk.git#v1.10.1"
   },
   "scopedRegistries": [
     { "name": "OpenUPM", "url": "https://package.openupm.com", "scopes": ["com.cysharp", "jp.hadashikick"] },
@@ -595,7 +595,7 @@ var options = new VhrSdkOptions
 |---|---|
 | `IVhrEconomy` | `GetBalanceAsync`, `GetItemsAsync`, `GetOwnedItemsAsync`, `PurchaseAsync` → `VhrPurchaseResult` (+ колбэк `Purchase`), `OpenTopUp`, `IsPurchaseAvailable` · событие `OnBalanceChanged` и `Observable<BalanceChanged> BalanceChanged` · `SpendAsync`/`GrantCoinsAsync` — **отключены** (`[Obsolete]`) |
 | `IVhrAchievements` | `GetForGameAsync`, `GetForCurrentGameAsync`, `GetMineAsync`, `GetMineForCurrentGameAsync`, `GetMyGamesAsync`, `GetPlatformAsync` |
-| `IVhrLeaderboard` | `SubmitAsync`, `GetTopAsync` (seam следующей волны, терпим к 501) |
+| `IVhrLeaderboard` | `GetGlobalAsync(limit)`, `GetForGameAsync(gameId, limit)` → `VhrLeaderboardRow[]`, `SubmitScoreAsync(gameId, score)` → `VhrLeaderboardRow` |
 | `IVhrServers` | `BindAsync`, `ListBindingsAsync`, `RequestInstanceAsync` (по умолчанию noop) |
 | `IVhrAds` | `ShowInterstitialAsync`, `ShowRewardedAsync` (+ колбэк-версии) → `VhrAdResult { Status }` · события `OnAdOpened` / `OnAdClosed` · `AutoPause`, `IsSupported`, `IsShowing` |
 | `IVhrSession` | `GameId`, `CurrentToken`, `State`, `Observable<VhrConnectionState> StateChanged` |

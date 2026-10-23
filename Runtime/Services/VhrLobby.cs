@@ -67,8 +67,11 @@ namespace VhrGames.Sdk
             opts ??= new VhrMatchmakingOptions();
             await EnsureReadyAsync(ct);
 
-            _startTcs = NewReplyTcs<VhrMatchInfo>();
-            if (ct.CanBeCanceled) ct.Register(() => _startTcs?.TrySetCanceled());
+            // Локальная ссылка + снятие регистрации: иначе отмена старого ct позже
+            // отменила бы ожидание СЛЕДУЮЩЕГО QuickMatch/StartAsync (поле _startTcs уже другое).
+            var tcs = NewReplyTcs<VhrMatchInfo>();
+            _startTcs = tcs;
+            using var ctReg = ct.CanBeCanceled ? ct.Register(() => tcs.TrySetCanceled()) : default;
 
             var sb = new StringBuilder();
             sb.Append("{\"op\":\"quickmatch\"");
@@ -81,7 +84,27 @@ namespace VhrGames.Sdk
             sb.Append('}');
             SendOp(sb.ToString());
 
-            var info = await AwaitReplyAsync(_startTcs);
+            // Подбор ждёт живых waitSec секунд (с добивкой ботами) или неограниченно (без
+            // ботов) — общий 15-с таймаут ответа тут обрывал бы честный подбор.
+            float timeout = opts.fillBots ? Math.Max(30, opts.waitSec + 30) : 300f;
+            VhrMatchInfo info;
+            try
+            {
+                info = await AwaitReplyAsync(tcs, timeout);
+            }
+            // Перестали ждать (таймаут или отмена ct игрой) — выходим из очереди подбора,
+            // чтобы сервер не собрал матч с игроком, который уже ушёл. CancelAsync шлёт
+            // cancel сам — его не дублируем.
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                SendOp("{\"op\":\"cancel\"}");
+                throw;
+            }
+            catch (VhrSdkException e) when (e.Code == "lobby_timeout")
+            {
+                SendOp("{\"op\":\"cancel\"}");
+                throw;
+            }
             await JoinMatchRoomAsync(info, ct);
             return info;
         }
@@ -92,7 +115,8 @@ namespace VhrGames.Sdk
             opts ??= new VhrLobbyOptions();
             await EnsureReadyAsync(CancellationToken.None);
 
-            _lobbyTcs = NewReplyTcs<VhrLobby>();
+            var tcs = NewReplyTcs<VhrLobby>();
+            _lobbyTcs = tcs;
 
             var sb = new StringBuilder();
             sb.Append("{\"op\":\"create\"");
@@ -105,7 +129,7 @@ namespace VhrGames.Sdk
             sb.Append('}');
             SendOp(sb.ToString());
 
-            return await AwaitReplyAsync(_lobbyTcs);
+            return await AwaitReplyAsync(tcs, ReplyTimeoutSeconds);
         }
 
         /// <inheritdoc />
@@ -115,7 +139,8 @@ namespace VhrGames.Sdk
                 throw new VhrSdkException("config_invalid", "code обязателен для JoinLobbyAsync.");
             await EnsureReadyAsync(CancellationToken.None);
 
-            _lobbyTcs = NewReplyTcs<VhrLobby>();
+            var tcs = NewReplyTcs<VhrLobby>();
+            _lobbyTcs = tcs;
 
             var sb = new StringBuilder();
             sb.Append("{\"op\":\"join\"");
@@ -123,7 +148,7 @@ namespace VhrGames.Sdk
             sb.Append('}');
             SendOp(sb.ToString());
 
-            return await AwaitReplyAsync(_lobbyTcs);
+            return await AwaitReplyAsync(tcs, ReplyTimeoutSeconds);
         }
 
         /// <inheritdoc />
@@ -182,9 +207,11 @@ namespace VhrGames.Sdk
         /// <inheritdoc />
         public async Task<VhrMatchInfo> StartAsync()
         {
-            _startTcs = NewReplyTcs<VhrMatchInfo>();
+            var tcs = NewReplyTcs<VhrMatchInfo>();
+            _startTcs = tcs;
             SendOp("{\"op\":\"start\"}");
-            var info = await AwaitReplyAsync(_startTcs);
+            // ev:start приходит после обратного отсчёта (ev:starting) — запас больше обычного.
+            var info = await AwaitReplyAsync(tcs, 30f);
             await JoinMatchRoomAsync(info, CancellationToken.None);
             return info;
         }
@@ -228,14 +255,25 @@ namespace VhrGames.Sdk
         private static TaskCompletionSource<T> NewReplyTcs<T>() =>
             new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        /// <summary>Ждёт ответ сервера с жёстким таймаутом — SDK не висит вечно, даже если кадр потерян.</summary>
-        private async Task<T> AwaitReplyAsync<T>(TaskCompletionSource<T> tcs)
+        private const float ReplyTimeoutSeconds = 15f;
+
+        /// <summary>
+        /// Ждёт ответ сервера с жёстким таймаутом — SDK не висит вечно, даже если кадр потерян.
+        /// Таймер — по кадрам и реальному времени (<see cref="VhrAsync"/>): таймаут через
+        /// <c>CancellationTokenSource(TimeSpan)</c> на WebGL не срабатывает (нет таймерного потока).
+        /// </summary>
+        private static async Task<T> AwaitReplyAsync<T>(TaskCompletionSource<T> tcs, float timeoutSeconds)
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            using (cts.Token.Register(() => tcs.TrySetException(
-                new VhrSdkException("lobby_timeout", "Сервер лобби не ответил вовремя. Попробуйте ещё раз."))))
+            var stop = new CancellationTokenSource();
+            _ = VhrAsync.WatchdogAsync(timeoutSeconds, stop.Token, () => tcs.TrySetException(
+                new VhrSdkException("lobby_timeout", "Сервер лобби не ответил вовремя. Попробуйте ещё раз.")));
+            try
             {
                 return await tcs.Task;
+            }
+            finally
+            {
+                stop.Cancel();
             }
         }
 
@@ -300,7 +338,8 @@ namespace VhrGames.Sdk
             for (int i = 0; i < 12; i++) // ~3 c суммарно (12 × 0.25 c)
             {
                 if (ct.IsCancellationRequested) break;
-                try { await Awaitable.WaitForSecondsAsync(0.25f, ct); }
+                // По реальному времени: при Time.timeScale = 0 WaitForSecondsAsync стоит.
+                try { await VhrAsync.DelayRealtimeAsync(0.25f, ct); }
                 catch { break; }
                 var fresh = _options.TokenProvider?.Invoke();
                 if (!string.IsNullOrEmpty(fresh) && !IsTokenStale(fresh)) return fresh;

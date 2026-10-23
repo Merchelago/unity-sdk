@@ -126,7 +126,9 @@ namespace VhrGames.Sdk
 
                 try
                 {
-                    await Awaitable.WaitForSecondsAsync(interval, ct);
+                    // По реальному времени: при Time.timeScale = 0 (пауза на сервере)
+                    // WaitForSecondsAsync стоит, репорты прекратились бы.
+                    await VhrAsync.DelayRealtimeAsync(interval, ct);
                 }
                 catch (OperationCanceledException)
                 {

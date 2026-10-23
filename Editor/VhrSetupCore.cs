@@ -315,13 +315,19 @@ namespace VhrGames.Sdk.Editor
                 s = s.Trim();
                 if (s[0] == 'v' || s[0] == 'V') s = s.Substring(1);
                 var plus = s.IndexOf('+');
-                if (plus >= 0) s = s.Substring(0, plus);
+                if (plus >= 0)
+                {
+                    if (!ValidIdentifiers(s.Substring(plus + 1))) return false;
+                    s = s.Substring(0, plus);
+                }
                 var dash = s.IndexOf('-');
                 if (dash >= 0)
                 {
                     pre = s.Substring(dash + 1);
                     s = s.Substring(0, dash);
-                    if (pre.Length == 0) return false;
+                    // Только [0-9A-Za-z-] через точку (SemVer 2.0): версия с сервера уходит в
+                    // git-тег «#v<версия>» — пробелы, «#», «?», кавычки туда не пропускаем.
+                    if (!ValidIdentifiers(pre)) return false;
                 }
                 var parts = s.Split('.');
                 if (parts.Length < 2 || parts.Length > 3) return false;
@@ -334,6 +340,19 @@ namespace VhrGames.Sdk.Editor
             }
 
             public static bool IsValid(string s) => TryParse(s, out _, out _);
+
+            private static bool ValidIdentifiers(string ids)
+            {
+                if (string.IsNullOrEmpty(ids)) return false;
+                foreach (var part in ids.Split('.'))
+                {
+                    if (part.Length == 0) return false;
+                    foreach (var c in part)
+                        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-'))
+                            return false;
+                }
+                return true;
+            }
 
             /// <summary>&lt;0 — a меньше b, 0 — равны, &gt;0 — a больше.</summary>
             public static int Compare(string a, string b)
@@ -404,6 +423,43 @@ namespace VhrGames.Sdk.Editor
         internal static bool SameUrl(string a, string b) =>
             string.Equals((a ?? string.Empty).Trim().TrimEnd('/'), (b ?? string.Empty).Trim().TrimEnd('/'),
                 StringComparison.OrdinalIgnoreCase);
+
+        // ================================================================= данные сервера
+
+        /// <summary>Единственный разрешённый владелец git-репозитория SDK для адреса из ответа сервера.</summary>
+        internal const string TrustedGitPrefix = "https://github.com/Merchelago/";
+
+        /// <summary>
+        /// Git-адрес SDK из ответа сервера можно вписать в manifest.json: репозиторий на
+        /// <see cref="TrustedGitPrefix"/>, путь «….git» (допускается «?path=…»), без «#» (тег
+        /// добавляем сами), «..», пробелов и кавычек. Иначе остаётся встроенный адрес —
+        /// ответ сервера не может подменить источник кода SDK.
+        /// </summary>
+        internal static bool IsTrustedGitUrl(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return false;
+            var u = url.Trim();
+            if (!u.StartsWith(TrustedGitPrefix, StringComparison.OrdinalIgnoreCase) || u.Contains("..")) return false;
+            foreach (var c in u)
+                if (!(c < 128 && char.IsLetterOrDigit(c)) && "-._/:?=&".IndexOf(c) < 0) return false;
+            var q = u.IndexOf('?');
+            return (q < 0 ? u : u.Substring(0, q)).EndsWith(".git", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Скоуп реестра из ответа сервера, который можно вписать в manifest.json. Нельзя:
+        /// односегментный («com»), с символами вне [a-z0-9._-] и перекрывающий пакеты Unity
+        /// (com.unity.*) или сам SDK (ru.vhrgames.*) — иначе сторонний реестр подменил бы их.
+        /// </summary>
+        internal static bool IsSafeScope(string scope)
+        {
+            if (string.IsNullOrWhiteSpace(scope)) return false;
+            var s = scope.Trim().ToLowerInvariant();
+            if (!Regex.IsMatch(s, @"^[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)+$", RegexOptions.CultureInvariant)) return false;
+            foreach (var reserved in new[] { "com.unity", "ru.vhrgames" })
+                if (ScopeCovers(s, reserved + ".x") || ScopeCovers(reserved, s)) return false;
+            return true;
+        }
 
         // ================================================================= manifest.json
 

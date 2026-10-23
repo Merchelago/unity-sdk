@@ -9,8 +9,8 @@
 // Контракт postMessage:
 //   Родитель → iframe:  { type: 'vhr:sdk:token', token: '<jwt>' }
 //   iframe → родитель:  { type: 'vhr:sdk:token-request' }
-// Принимаются ТОЛЬКО сообщения с event.origin из VHR_ALLOWED_ORIGINS
-// (прод vhrgames.ru + localhost:5173 для дев-режима).
+// Принимаются ТОЛЬКО сообщения от window.parent с event.origin из allowedOrigins
+// (прод vhrgames.ru и его https-сабдомены + localhost для дев-режима).
 //
 // Этот файл компилируется ТОЛЬКО для WebGL (папка Plugins/WebGL).
 mergeInto(LibraryManager.library, {
@@ -52,6 +52,12 @@ mergeInto(LibraryManager.library, {
         var data = event.data;
         if (!data || typeof data !== "object" || data.type !== "vhr:sdk:token") {
           return; // не наш канал — на странице много message-событий, молчим
+        }
+        // Только прямой родитель (страница платформы шлёт токен в contentWindow фрейма),
+        // как у каналов рекламы и экономики: соседние фреймы/вкладки/попапы того же
+        // домена не могут подсунуть игре свой токен.
+        if (event.source !== window.parent) {
+          return;
         }
         // Это попытка прислать токен игрока — проверяем origin родителя.
         if (!vhrSdkBridge.isAllowedOrigin(event.origin)) {

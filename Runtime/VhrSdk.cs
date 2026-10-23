@@ -20,7 +20,7 @@ namespace VhrGames.Sdk
     public static class VhrSdk
     {
         /// <summary>SDK semantic version. Mirrored into the build marker and sent as <c>X-Vhr-Sdk-Version</c>.</summary>
-        public const string SdkVersion = "1.10.0";
+        public const string SdkVersion = "1.10.1";
 
         private static VhrSession _session;
         private static VhrSdkOptions _options;
@@ -126,10 +126,21 @@ namespace VhrGames.Sdk
         /// <param name="options">Validated configuration.</param>
         /// <param name="http">Optional transport override (tests). Defaults to <see cref="UnityWebRequestHttp"/>.</param>
         /// <param name="ct">Cancellation token.</param>
-        public static async Task InitializeAsync(
+        public static Task InitializeAsync(
             VhrSdkOptions options, IVhrHttp http = null, CancellationToken ct = default)
         {
-            if (IsInitialized) return;
+            if (IsInitialized) return Task.CompletedTask;
+            // Параллельный вызов (два компонента на старте) ждёт ту же инициализацию, а не
+            // собирает второй граф сервисов поверх первого (с потерей подписок на события).
+            if (_initTask != null && !_initTask.IsCompleted) return _initTask;
+            _initTask = InitializeOnceAsync(options, http, ct);
+            return _initTask;
+        }
+
+        private static Task _initTask;
+
+        private static async Task InitializeOnceAsync(VhrSdkOptions options, IVhrHttp http, CancellationToken ct)
+        {
             if (options == null) throw new ArgumentNullException(nameof(options));
             options.Validate();
 
@@ -255,6 +266,7 @@ namespace VhrGames.Sdk
             GameSessions = null;
             VhrAdsService.ResetShared();
             Ads = null;
+            _initTask = null;
             IsInitialized = false;
         }
     }

@@ -105,10 +105,12 @@ namespace VhrGames.Sdk.Editor
             };
             var changelog = root.GetString("changelogUrl");
             if (IsHttps(changelog)) info.ChangelogUrl = changelog.Trim();
+            // Источник кода и имя пакета сервер может уточнить только в пределах VHR:
+            // git — репозитории VHR на GitHub, имя — ru.vhrgames.* (иначе встроенные значения).
             var git = root.GetString("gitUrl");
-            if (IsHttps(git)) info.GitUrl = git.Trim();
-            var pkg = root.GetString("packageName");
-            if (!string.IsNullOrWhiteSpace(pkg)) info.PackageName = pkg.Trim();
+            if (VhrSetupCore.IsTrustedGitUrl(git)) info.GitUrl = git.Trim();
+            var pkg = root.GetString("packageName")?.Trim();
+            if (IsVhrPackageName(pkg)) info.PackageName = pkg;
 
             foreach (var kv in root.Get("dependencies")?.ToStringMap() ?? new Dictionary<string, string>())
                 if (VhrSetupCore.SemVer.IsValid(kv.Value)) info.Dependencies[kv.Key] = kv.Value.Trim();
@@ -122,8 +124,11 @@ namespace VhrGames.Sdk.Editor
                     var url = r.GetString("url");
                     if (!IsHttps(url)) continue;
                     var reg = new Registry { Name = r.GetString("name") ?? url, Url = url.Trim() };
-                    reg.Scopes.AddRange(r.Get("scopes")?.ToStringList() ?? new List<string>());
-                    info.Registries.Add(reg);
+                    // Без com.unity.* / ru.vhrgames.* и односегментных: сторонний реестр не
+                    // должен перехватывать пакеты Unity или сам SDK.
+                    foreach (var s in r.Get("scopes")?.ToStringList() ?? new List<string>())
+                        if (VhrSetupCore.IsSafeScope(s)) reg.Scopes.Add(s.Trim());
+                    if (reg.Scopes.Count > 0) info.Registries.Add(reg);
                 }
 
             var deps = root.Get("deprecations");
@@ -141,6 +146,14 @@ namespace VhrGames.Sdk.Editor
 
         private static bool IsHttps(string s) =>
             !string.IsNullOrWhiteSpace(s) && s.Trim().StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsVhrPackageName(string s)
+        {
+            if (string.IsNullOrEmpty(s) || !s.StartsWith("ru.vhrgames.", StringComparison.Ordinal)) return false;
+            foreach (var c in s)
+                if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_')) return false;
+            return true;
+        }
     }
 
     /// <summary>

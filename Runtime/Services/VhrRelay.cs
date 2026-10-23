@@ -150,31 +150,59 @@ namespace VhrGames.Sdk
             var code = string.IsNullOrWhiteSpace(lobbyCode) ? "main" : lobbyCode.Trim();
             _room = $"{_options.GameId}:{code}";
 
+            // Повторный вызов (реконнект после обрыва/таймаута, смена комнаты): прежний сокет
+            // отцепляем и закрываем. Иначе он остаётся подписанным, и его поздний onclose
+            // обнулит SelfId и уронит ожидания уже НОВОГО соединения (и лобби вместе с ним).
+            DetachSocket();
+
             SelfId = 0;
-            _joinedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var joinedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _joinedTcs = joinedTcs;
 
-            _socket = _socketFactory();
-            _socket.OnMessage += HandleMessageRaw;
-            _socket.OnClose += HandleCloseRaw;
+            var socket = _socketFactory();
+            _socket = socket;
+            socket.OnMessage += HandleMessageRaw;
+            socket.OnClose += HandleCloseRaw;
 
-            // Жёсткий таймаут на ВЕСЬ connect+join. На WebGL раньше тут висло вечно,
-            // если onopen/0x81 не приходили — теперь через 10с бросаем понятную ошибку
-            // вместо бесконечного «Создание лобби…». Линкуем с внешним ct.
+            // Жёсткий таймаут на ВЕСЬ connect+join: через 10с — понятная ошибка вместо
+            // бесконечного «Создание лобби…». Таймер — по кадрам (VhrAsync): CancelAfter на
+            // WebGL не срабатывает (нет таймерного потока). Линкуем с внешним ct.
+            const string timeoutMessage = "Релей не подтвердил вход за 10с (нет onopen или SJoined 0x81).";
             using var connCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            connCts.CancelAfter(TimeSpan.FromSeconds(10));
-            connCts.Token.Register(() => _joinedTcs?.TrySetException(
-                new VhrSdkException("relay_timeout", "Релей не подтвердил вход за 10с (нет onopen или SJoined 0x81).")));
+            using var ctReg = ct.CanBeCanceled ? ct.Register(() => joinedTcs.TrySetCanceled()) : default;
+            var timedOut = false;
+            var stop = new CancellationTokenSource();
+            _ = VhrAsync.WatchdogAsync(10f, stop.Token, () =>
+            {
+                timedOut = true;
+                joinedTcs.TrySetException(new VhrSdkException("relay_timeout", timeoutMessage));
+                try { connCts.Cancel(); } catch (ObjectDisposedException) { /* уже завершились */ }
+            });
 
-            UnityEngine.Debug.Log($"[VHR Relay] ConnectAsync → {baseUrl} (room={_room})");
-            await _socket.ConnectAsync(baseUrl.Trim(), connCts.Token);
-            UnityEngine.Debug.Log("[VHR Relay] сокет ОТКРЫТ → шлю join");
+            try
+            {
+                UnityEngine.Debug.Log($"[VHR Relay] ConnectAsync → {baseUrl} (room={_room})");
+                try
+                {
+                    await socket.ConnectAsync(baseUrl.Trim(), connCts.Token);
+                }
+                catch (OperationCanceledException) when (timedOut)
+                {
+                    throw new VhrSdkException("relay_timeout", timeoutMessage);
+                }
+                UnityEngine.Debug.Log("[VHR Relay] сокет ОТКРЫТ → шлю join");
 
-            // Шлём join сразу после открытия.
-            SendJoin(_room);
-            UnityEngine.Debug.Log("[VHR Relay] join отправлен → жду 0x81 SJoined…");
+                // Шлём join сразу после открытия.
+                SendJoin(_room);
+                UnityEngine.Debug.Log("[VHR Relay] join отправлен → жду 0x81 SJoined…");
 
-            // Ждём подтверждения входа (0x81).
-            await _joinedTcs.Task;
+                // Ждём подтверждения входа (0x81).
+                await joinedTcs.Task;
+            }
+            finally
+            {
+                stop.Cancel();
+            }
             UnityEngine.Debug.Log($"[VHR Relay] JOINED self={SelfId} ✓");
 
             // Опциональный апгрейд на WebRTC (только WebGL). Прозрачно для игры:
@@ -335,12 +363,24 @@ namespace VhrGames.Sdk
 
             _room = roomId.Trim();
             SelfId = 0;
-            _joinedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            if (ct.CanBeCanceled)
-                ct.Register(() => _joinedTcs?.TrySetCanceled());
+            var joinedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _joinedTcs = joinedTcs;
+            // Локальная ссылка + снятие регистрации: отмена старого ct не должна ронять
+            // следующий вход. Плюс жёсткий таймаут (раньше ожидание 0x81 было бесконечным).
+            using var ctReg = ct.CanBeCanceled ? ct.Register(() => joinedTcs.TrySetCanceled()) : default;
+            var stop = new CancellationTokenSource();
+            _ = VhrAsync.WatchdogAsync(10f, stop.Token, () => joinedTcs.TrySetException(
+                new VhrSdkException("relay_timeout", $"Релей не подтвердил вход в комнату '{_room}' за 10с.")));
 
-            SendJoin(_room);
-            await _joinedTcs.Task;
+            try
+            {
+                SendJoin(_room);
+                await joinedTcs.Task;
+            }
+            finally
+            {
+                stop.Cancel();
+            }
         }
 
         private void SendJoin(string room)
@@ -664,7 +704,10 @@ namespace VhrGames.Sdk
                 | (buf[offset + 3] << 24);
         }
 
-        public void Dispose()
+        public void Dispose() => DetachSocket();
+
+        /// <summary>Отцепляет и закрывает текущие сокет и WebRTC-канал (без события <see cref="OnClosed"/>).</summary>
+        private void DetachSocket()
         {
             var rtc = _webRtc;
             _webRtc = null;

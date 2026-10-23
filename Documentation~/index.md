@@ -365,16 +365,15 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
 Тело `POST /api/purchase`: `{ userId, itemId, quantity, externalId, gameId }` (заголовки
 `X-Vhr-Game-Id`, `X-Vhr-Sdk-Version: 1.9.0`, `Authorization: Bearer <игровой токен>`).
 
-### 6.2 `IVhrLeaderboard`  *(seam следующей волны)*
+### 6.2 `IVhrLeaderboard`
 
-| Метод | HTTP | Запрос | Ответ |
+| Метод | HTTP (`{GamesBaseUrl}`) | Запрос | Ответ |
 |---|---|---|---|
-| `SubmitAsync(userId, score)` | `POST /api/leaderboard/submit` | `{ userId, score }` | `{ accepted }`; **501 → возвращает `false`** |
-| `GetTopAsync(period, limit)` | `GET /api/leaderboard/top?period=&limit=` | — | `VhrLeaderboardPage`; **501 → `{ notImplemented:true, entries:[] }`** |
+| `GetGlobalAsync(limit = 100)` | `GET /api/Leaderboard/global?limit=` | — | `VhrLeaderboardRow[]` (501 → пустой массив) |
+| `GetForGameAsync(gameId, limit = 100)` | `GET /api/Leaderboard/games/{gameId}?limit=` | — | `VhrLeaderboardRow[]` (501 → пустой массив) |
+| `SubmitScoreAsync(gameId, score)` | `POST /api/Leaderboard/score` | `{ gameId, score }` | `VhrLeaderboardRow` |
 
-Серверная персистентность ещё не поставлена; мост отвечает `501`. Клиент **не
-бросает** исключение на 501, чтобы код игры можно было интегрировать уже сейчас
-и он заработал, когда бэкенд будет готов.
+`VhrLeaderboardRow`: `id`, `userId`, `name`, `gameId`, `score`, `createdAt`, `isCurrentUser`.
 
 ### 6.3 `IVhrServers`  *(по умолчанию noop)*
 
@@ -465,7 +464,7 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
 | Editor: «Live выбран, но …» и работа в Simulation | Нет ключа / ключ не песочный / истёк | `VHR → Тестирование в Editor` → вставьте ключ из кабинета → «Проверить» |
 | Editor Live: `401` на всех запросах | Ключ отозван, истёк или скопирован не полностью | Получите новый ключ на сайте |
 | Ачивка записалась, а монет не прибавилось | Монетная награда `grant/achievement` из игры форсится в 0 | Ожидаемо: игры не начисляют монеты |
-| `not_implemented` не брошен, но нет данных | Seam лидерборда/серверов 501 | Ожидаемо, пока бэкенд не поставлен; гейтите UI по `notImplemented` / `status=="noop"` |
+| `not_implemented` не брошен, но нет данных | Seam серверов 501 / лидерборд вернул пустой массив | Ожидаемо, пока бэкенд не поставлен; гейтите UI серверов по `status=="noop"` |
 | Реклама всегда `Unavailable` на WebGL | Игра открыта не со страницы vhrgames.ru, реклама выключена платформой, детский аккаунт, адблок или нет объявления | Проверяйте на vhrgames.ru; это нормальный исход — продолжайте игру / прячьте кнопку |
 | Реклама часто `Cooldown` | Лимиты частоты платформы (interstitial ~ раз в 90 с, rewarded ~ 20/ч) или повторный вызов во время показа | Не вызывайте чаще; предложите rewarded позже |
 | Состояние подключения застряло в `Faulted` | Мост недоступен на init | Не фатально; вызовы ретраятся по требованию. Проверьте сеть/URL |

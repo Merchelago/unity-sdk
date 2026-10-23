@@ -3,6 +3,55 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/). Как выпускаются версии — [RELEASING.md](RELEASING.md).
 
+## [1.10.1] - 2026-10-23
+
+### Исправлено — WebGL: зависания и таймауты
+- **Релей с WebRTC-апгрейдом (`PreferWebRtc = true`, по умолчанию) больше не виснет на WebGL.**
+  `WebGLWebRtc.StartAsync` ждал открытия канала с `ConfigureAwait(false)`: на WebGL нет тредпула, и
+  продолжение не выполнялось никогда (тот же корень, что в 1.7.6), — `VhrRelay.ConnectAsync` не
+  возвращался после `JOINED`, лобби висело на «Создание лобби…». Делегаты JS-колбэков WebRTC теперь
+  в статических полях (как у WebSocket с 1.7.5).
+- **Жёсткие таймауты теперь работают и на WebGL.** `CancelAfter` / `CancellationTokenSource(TimeSpan)`
+  требуют таймерного потока, которого на WebGL нет, — таймауты connect релея (10 с), ответа лобби (15 с)
+  и открытия WebRTC (5 с) там не срабатывали. Новый внутренний `VhrAsync` считает время по кадрам и
+  `Time.realtimeSinceStartup`. `VhrRelay.JoinRoomRawAsync` (вход в комнату матча) получил таймаут 10 с —
+  раньше ждал `0x81` бесконечно. `UnityWebRequestHttp` — страховочный дедлайн `timeout + 5 с`.
+- **Пауза игры (`Time.timeScale = 0`) больше не подвешивает запросы.** Ожидание свежего игрового
+  токена (перед запросом и после `401`), токен для лобби и репорты `VhrServerHost` шли через
+  `Awaitable.WaitForSecondsAsync` (масштабируемое время) — магазин в меню паузы или при `AdsAutoPause`
+  висел до снятия паузы. Теперь — реальное время.
+
+### Исправлено — релей и лобби
+- `VhrRelay.ConnectAsync` при повторном вызове (реконнект, смена комнаты) закрывает и отцепляет
+  прежний сокет: раньше его поздний `onclose` обнулял `SelfId` и ронял ожидания нового соединения.
+- `QuickMatchAsync`: таймаут ожидания матча учитывает `waitSec` (с ботами — `waitSec + 30 с`, без ботов —
+  5 мин) вместо общих 15 с; при таймауте или отмене `ct` SDK выходит из очереди (`op: cancel`).
+  `StartAsync` ждёт `ev:start` до 30 с (после обратного отсчёта).
+- Отмена старого `CancellationToken` больше не отменяет следующее ожидание лобби/входа в комнату
+  (регистрации ссылались на поле, а не на свой `TaskCompletionSource`, и не снимались).
+- `VhrSdk.InitializeAsync`: параллельные вызовы ждут одну инициализацию, а не собирают второй граф
+  сервисов поверх первого.
+
+### Безопасность
+- `VhrSdkBridge.jslib`: токен `vhr:sdk:token` принимается только от `window.parent` (как ответы рекламы
+  и экономики), а не от любого окна разрешённого домена.
+- Установщик и окно обновления: данные `GET /api/Sdk/versions` проверяются строже. `gitUrl` — только
+  репозитории `https://github.com/Merchelago/….git` (иначе встроенный адрес); скоупы реестров — без
+  односегментных и перекрывающих `com.unity.*` / `ru.vhrgames.*` (сторонний реестр не может подменить
+  пакеты Unity или SDK); `packageName` — только `ru.vhrgames.*`; версии — строгий SemVer 2.0 (в
+  пре-релизе/метаданных только `[0-9A-Za-z-.]`, в git-тег не попадут `#`, `?`, пробелы, кавычки).
+- «Каталог игры» → «Сгенерировать C#-константы»: управляющие символы и разделители строк U+0085/U+2028/
+  U+2029 из названий и id товаров экранируются — название не может «выйти» из `///`-комментария в код.
+
+### Документация
+- README и `Documentation~/index.md`: раздел `IVhrLeaderboard` приведён к реальному API
+  (`GetGlobalAsync`, `GetForGameAsync`, `SubmitScoreAsync`).
+
+### CI
+- `release.yml`: actions закреплены по SHA и переведены на Node 24 (`actions/checkout` v7.0.1,
+  `actions/setup-node` v7.1.0; Node 20 на раннерах GitHub снят с поддержки), раннер `ubuntu-24.04`,
+  `persist-credentials: false` — релиз создаётся через `gh` с `GH_TOKEN`, git-доступ шагам не нужен.
+
 ## [1.10.0] - 2026-10-06
 
 ### Добавлено — установка в один шаг
@@ -533,6 +582,7 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
+[1.10.1]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.10.1
 [1.6.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.6.0
 [1.5.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.5.0
 [1.4.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.4.0
