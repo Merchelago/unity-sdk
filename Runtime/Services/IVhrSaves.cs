@@ -44,6 +44,14 @@ namespace VhrGames.Sdk
     /// <c>ct</c>): итог — в <see cref="VhrSaveLoadResult"/> / <see cref="VhrSaveWriteResult"/>.
     /// Вызывать с главного потока.
     /// </para>
+    /// <para>
+    /// <b>Сначала локально (SDK 1.12.0+).</b> Каждое <see cref="QueueSave"/> / <see cref="SaveAsync"/>
+    /// сразу кладёт данные слота на устройство (<c>persistentDataPath/vhr-sdk/saves/…</c>; на WebGL —
+    /// IndexedDB браузера), пока сервер их не подтвердит: закрыли вкладку без связи — при следующем
+    /// запуске SDK сам догрузит их в облако. <see cref="LoadAsync"/> отдаёт неотправленные данные
+    /// (<see cref="VhrSaveLoadResult.FromPending"/>), а без связи — последнюю известную облачную
+    /// версию (<see cref="VhrSaveLoadResult.FromCache"/>). Для гостя (нет токена) на диск ничего не пишется.
+    /// </para>
     /// </summary>
     public interface IVhrSaves
     {
@@ -92,6 +100,13 @@ namespace VhrGames.Sdk
         /// иначе — ошибка (сеть, нет токена…): прогресс в облаке может быть, не начинайте
         /// игру «с нуля» молча. Загрузка запоминает версию слота — автосохранение будет
         /// писать поверх именно неё и заметит чужую запись (<see cref="OnConflict"/>).
+        /// <para>
+        /// SDK 1.12.0+: есть неотправленные данные слота (автосохранение ещё не дошло, в том числе с
+        /// прошлого запуска) — они новее облака: возвращаются они, без запроса,
+        /// <see cref="VhrSaveLoadResult.FromPending"/> = <c>true</c> (кроме слота в конфликте — там
+        /// загружается облачная версия). Нет связи — последняя известная облачная версия с этого
+        /// устройства, <see cref="VhrSaveLoadResult.FromCache"/> = <c>true</c>.
+        /// </para>
         /// </summary>
         Task<VhrSaveLoadResult> LoadAsync(string slot = "default", CancellationToken ct = default);
 
@@ -113,6 +128,10 @@ namespace VhrGames.Sdk
         /// при <see cref="VhrSaveError.RateLimited"/> — <see cref="VhrSaveWriteResult.RetryAfterSeconds"/>.
         /// Не вызывайте каждый кадр (лимит — 12 записей в минуту): для этого есть <see cref="QueueSave"/>.
         /// Автосохранения слота, накопленные до вызова, после успешной записи отбрасываются.
+        /// SDK 1.12.0+: данные сначала кладутся на устройство; при временной ошибке (сеть, 5xx, 429)
+        /// результат — ошибка, но данные остаются в очереди автосохранения и уйдут сами
+        /// (<see cref="HasPendingSaves"/>), в том числе после перезапуска. Если наш прошлый запрос дошёл,
+        /// а ответ потерялся, <c>409</c> с теми же данными на сервере считается успехом.
         /// </summary>
         Task<VhrSaveWriteResult> SaveAsync(string slot, string data, long? expectedVersion = null, CancellationToken ct = default);
 
@@ -141,8 +160,10 @@ namespace VhrGames.Sdk
         /// последнее значение. Дёшево — можно звать на каждое изменение прогресса.
         /// SDK отправляет накопленное сразу при потере фокуса, сворачивании/скрытии
         /// вкладки, закрытии страницы и выходе; после <c>429</c> повторяет через
-        /// <c>Retry-After</c>, при обрыве связи — с нарастающей паузой (данные живут в
-        /// памяти до успешной отправки). Если слот загружали (<see cref="LoadAsync"/>),
+        /// <c>Retry-After</c>, при обрыве связи — с нарастающей паузой, сразу при возвращении сети
+        /// или во вкладку. Данные до подтверждения сервером лежат и на устройстве (SDK 1.12.0+;
+        /// запись на диск — не чаще раза в секунду на слот и сразу при скрытии страницы / потере
+        /// фокуса / выходе) и догружаются при следующем запуске. Если слот загружали (<see cref="LoadAsync"/>),
         /// запись идёт с проверкой версии; чужая запись → <see cref="OnConflict"/>.
         /// </summary>
         void QueueSave(string slot, string data);
@@ -260,12 +281,27 @@ namespace VhrGames.Sdk
         /// <summary>Пояснение по-русски — для логов, не для игрока.</summary>
         public string Message { get; set; }
 
+        /// <summary>
+        /// SDK 1.12.0+: <c>true</c> — <see cref="Data"/> — неотправленное локальное сохранение этого
+        /// устройства (автосохранение ещё не дошло до сервера, возможно — с прошлого запуска). Оно новее
+        /// облачного; SDK отправит его сам. <see cref="Version"/> — версия, поверх которой оно ляжет (0 — неизвестна).
+        /// </summary>
+        public bool FromPending { get; set; }
+
+        /// <summary>
+        /// SDK 1.12.0+: <c>true</c> — сервер недоступен, <see cref="Data"/> — последняя облачная версия,
+        /// которую это устройство видело (локальная копия). На другом устройстве могли сохранить новее —
+        /// это выяснится при следующей записи (<see cref="IVhrSaves.OnConflict"/>).
+        /// </summary>
+        public bool FromCache { get; set; }
+
         internal static VhrSaveLoadResult Fail(string slot, VhrSaveError error, string code, string message)
             => new VhrSaveLoadResult { Slot = slot, Error = error, ErrorCode = code, Message = message };
 
         /// <inheritdoc />
         public override string ToString() => Found
-            ? $"VhrSaveLoadResult('{Slot}': v{Version}, {Data?.Length ?? 0} симв.)"
+            ? $"VhrSaveLoadResult('{Slot}': v{Version}, {Data?.Length ?? 0} симв." +
+              (FromPending ? ", неотправленное" : FromCache ? ", из локальной копии" : "") + ")"
             : $"VhrSaveLoadResult('{Slot}': {Error}{(string.IsNullOrEmpty(ErrorCode) ? "" : ", " + ErrorCode)})";
     }
 
@@ -384,6 +420,12 @@ namespace VhrGames.Sdk
     /// <see cref="VhrAsync"/> (кадры + реальное время), без <c>ConfigureAwait(false)</c>;
     /// операции одного слота выполняются строго по очереди.
     /// </para>
+    /// <para>
+    /// SDK 1.12.0+ — «сначала локально» (<see cref="VhrSavesDisk"/>): неподтверждённые данные слота —
+    /// в <c>slot_{slot}.pending.json</c>, последняя известная серверная версия — в
+    /// <c>slot_{slot}.cache.json</c> (<c>persistentDataPath/vhr-sdk/saves/{gameId}/{userId}/</c>).
+    /// В режиме Simulation (Editor) локальные файлы не пишутся — «облако» и так на диске.
+    /// </para>
     /// </remarks>
     public sealed class VhrSavesService : IVhrSaves, IDisposable
     {
@@ -408,6 +450,12 @@ namespace VhrGames.Sdk
         private const float MaxNetworkBackoffSeconds = 60f;
         private const float NoTokenRetrySeconds = 30f;
         private const int FlushAttempts = 3;
+        // Неотправленные данные слота пишутся на диск не чаще раза в секунду (и сразу — при скрытии
+        // страницы, потере фокуса, выходе): QueueSave можно звать хоть каждый кадр.
+        private const float DiskWriteIntervalSeconds = 1f;
+        // Токен игрока может прийти позже старта SDK — столько секунд ждём его, чтобы поднять
+        // неотправленные сохранения прошлого запуска, даже если игра сама не трогает Saves.
+        private const int RestoreWatchSeconds = 120;
 
         private static VhrSavesService _shared;
 
@@ -419,7 +467,32 @@ namespace VhrGames.Sdk
         {
             public string Data;
             public long Seq;
+            // Явный SaveAsync, не дошедший из-за временной ошибки: писать с его expectedVersion
+            // (решение игры), а не с версией автосохранения.
+            public bool Explicit;
+            public long? Expected;
         }
+
+        // Неподтверждённые данные слота, ещё не записанные на диск (запись на диск — с интервалом).
+        private sealed class DiskEntry
+        {
+            public string Data;
+            public long Seq;
+            public bool Explicit;
+            public long? Expected;
+        }
+
+        // Локальные файлы (null — Simulation или нет persistentDataPath).
+        private readonly VhrSavesDisk _disk;
+        private readonly Dictionary<string, DiskEntry> _diskDirty = new Dictionary<string, DiskEntry>(StringComparer.Ordinal);
+        // Какие данные (seq) и чьи (userId) лежат в pending-файле слота.
+        private readonly Dictionary<string, long> _diskSeq = new Dictionary<string, long>(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _diskUser = new Dictionary<string, string>(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> _diskLastWrite = new Dictionary<string, float>(StringComparer.Ordinal);
+        private bool _diskFlushRunning;
+        private bool _diskWarned;
+        private string _restoredUser;   // для кого уже подняты pending-файлы
+        private float _lastRestoreTry = float.MinValue;
 
         // Очередь автосохранения: слот → последнее состояние.
         private readonly Dictionary<string, PendingSave> _pending = new Dictionary<string, PendingSave>(StringComparer.Ordinal);
@@ -469,7 +542,24 @@ namespace VhrGames.Sdk
             Application.focusChanged += OnFocusChanged;
             Application.quitting += OnQuitting;
             VhrWebGlLifecycleChannel.PageHidden += OnPageHidden;
+            // SDK 1.12.0+: вернулась сеть / игрок вернулся во вкладку — повторить сразу, без паузы.
+            VhrWebGlLifecycleChannel.PageVisible += OnPageVisible;
+            VhrWebGlLifecycleChannel.BrowserOnlineChanged += OnBrowserOnlineChanged;
             VhrWebGlLifecycleChannel.EnsureInitialized();
+
+            // «Сначала локально»: поднять неотправленные сохранения прошлого запуска (как только
+            // известен игрок) и догрузить их существующим циклом автосохранения.
+            if (!IsSimulation)
+            {
+                var root = VhrWebGlStorage.TryGetRoot();
+                if (root != null) _disk = new VhrSavesDisk(root, options.GameId);
+            }
+            if (_disk != null)
+            {
+                VhrWebGlStorage.EnsureInitialized();
+                TryRestore(force: true);
+                if (_restoredUser == null) _ = RestoreWhenTokenAsync();
+            }
         }
 
         /// <summary>
@@ -523,10 +613,28 @@ namespace VhrGames.Sdk
                 return Log(VhrSaveLoadResult.Fail(slot, VhrSaveError.BadSlot, "bad_slot", problem));
             if (_disposed)
                 return Log(VhrSaveLoadResult.Fail(s, VhrSaveError.Unknown, "disposed", "Сервис сохранений уничтожен."));
+            TryRestore();
 
             return await RunSerialized(s, async () =>
             {
                 ct.ThrowIfCancellationRequested();
+
+                // Неотправленные данные слота новее облака — отдаём их (SDK 1.12.0+). В конфликте —
+                // нет: игра загружает облачную версию, чтобы решить, чья главнее.
+                if (!_conflicts.ContainsKey(s) && _pending.TryGetValue(s, out var local))
+                {
+                    return Log(new VhrSaveLoadResult
+                    {
+                        Slot = s,
+                        Found = true,
+                        Data = local.Data,
+                        Version = local.Explicit
+                            ? local.Expected ?? 0
+                            : (_known.TryGetValue(s, out var baseVersion) ? baseVersion : 0),
+                        FromPending = true
+                    });
+                }
+
                 var r = await LoadCoreAsync(s, ct);
                 if (r.Found || r.Error == VhrSaveError.NotFound)
                 {
@@ -536,8 +644,28 @@ namespace VhrGames.Sdk
                     {
                         // Игра взяла облачную версию — придержанное автосохранение устарело.
                         _pending.Remove(s);
+                        DropLocalPending(s);
                         _log.Verbose($"Saves: конфликт слота '{s}' снят загрузкой (версия {r.Version}); придержанное автосохранение отброшено.");
                     }
+                    if (r.Found) WriteCacheSafe(s, r.Data, r.Version, r.UpdatedAt);
+                    else DeleteCacheSafe(s);
+                }
+                else if (IsTransientLoadError(r.Error) && TryReadCache(s, out var cache))
+                {
+                    // Нет связи — последняя облачная версия, которую видело это устройство. Автосохранение
+                    // пойдёт поверх неё: чужая запись с другого устройства даст конфликт, а не затрётся.
+                    if (!_known.ContainsKey(s)) _known[s] = cache.Version;
+                    _loadFailed.Remove(s);
+                    return Log(new VhrSaveLoadResult
+                    {
+                        Slot = s,
+                        Found = true,
+                        Data = cache.Data,
+                        Version = cache.Version,
+                        UpdatedAt = cache.UpdatedAt,
+                        FromCache = true,
+                        Message = "Сервер недоступен — данные из локальной копии последней облачной версии. " + r.Message
+                    });
                 }
                 else if (!_known.ContainsKey(s))
                 {
@@ -615,12 +743,29 @@ namespace VhrGames.Sdk
                     "expectedVersion < 0: допустимо null, 0 (только создать) или версия ≥ 1."));
             if (_disposed)
                 return Log(VhrSaveWriteResult.Fail(s, VhrSaveError.Unknown, "disposed", "Сервис сохранений уничтожен."));
+            TryRestore();
 
-            var mark = _seq; // автосохранения, накопленные до этого вызова
+            // Автосохранения, накопленные до этого вызова, имеют Seq ≤ mark; позже — больше.
+            var seq = ++_seq;
+            var mark = seq;
+            // Сначала на устройство: оборвётся связь или закроют вкладку — данные не пропадут.
+            PersistLocal(s, new DiskEntry { Data = data, Seq = seq, Explicit = true, Expected = expectedVersion }, true);
             return await RunWriteSerialized(s, async () =>
             {
-                ct.ThrowIfCancellationRequested();
-                var r = await WriteCoreAsync(s, data, expectedVersion, ct);
+                VhrSaveWriteResult r;
+                try
+                {
+                    ct.ThrowIfCancellationRequested();
+                    r = await WriteCoreAsync(s, data, expectedVersion, ct);
+                    if (r.Error == VhrSaveError.Conflict) r = await ResolveConflictEchoAsync(s, data, r, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Игра отменила запись — не догружать её молча при следующем запуске.
+                    DropLocalPending(s, seq);
+                    throw;
+                }
+
                 NoteRateLimit(r);
                 if (r.Ok)
                 {
@@ -629,7 +774,26 @@ namespace VhrGames.Sdk
                     if (_pending.TryGetValue(s, out var p) && p.Seq <= mark) _pending.Remove(s);
                     if (_conflicts.Remove(s))
                         _log.Verbose($"Saves: конфликт слота '{s}' снят явной записью (версия {r.Version}).");
+                    OnWriteConfirmed(s, seq, data, r);
                     if (_pending.Count > 0) EnsurePump();
+                }
+                else if (IsTransientWriteError(r))
+                {
+                    // Временный сбой: данные остаются на устройстве и уходят циклом автосохранения с
+                    // expectedVersion этого вызова (если игра не накопила для слота ничего новее).
+                    if (!_pending.TryGetValue(s, out var cur) || cur.Seq <= mark)
+                    {
+                        _pending[s] = new PendingSave { Data = data, Seq = seq, Explicit = true, Expected = expectedVersion };
+                        // Явная запись — решение игры: конфликт слота она и разрешает.
+                        _conflicts.Remove(s);
+                        EnsurePump();
+                    }
+                }
+                else
+                {
+                    // Окончательный отказ (конфликт, квота, размер…): решает игра по результату —
+                    // при следующем запуске эти данные сами не уйдут.
+                    DropLocalPending(s, seq);
                 }
                 return Log(r);
             });
@@ -654,6 +818,7 @@ namespace VhrGames.Sdk
                 return false;
             }
             if (_disposed) return false;
+            TryRestore();
 
             var mark = _seq;
             return await RunWriteSerialized(s, async () =>
@@ -672,6 +837,8 @@ namespace VhrGames.Sdk
                 _conflicts.Remove(s);
                 // Удаление отменяет автосохранения слота, накопленные до него.
                 if (_pending.TryGetValue(s, out var p) && p.Seq <= mark) _pending.Remove(s);
+                DropLocalPending(s, mark);
+                DeleteCacheSafe(s);
                 _log.Verbose($"Saves: слот '{s}' удалён.");
                 return true;
             });
@@ -694,15 +861,22 @@ namespace VhrGames.Sdk
                 return;
             }
 
+            TryRestore();
             if (_pending.TryGetValue(s, out var p))
             {
                 p.Data = data;
                 p.Seq = ++_seq;
+                // Новое автосохранение — снова с версией автосохранения, а не явного SaveAsync.
+                p.Explicit = false;
+                p.Expected = null;
             }
             else
             {
-                _pending[s] = new PendingSave { Data = data, Seq = ++_seq };
+                p = new PendingSave { Data = data, Seq = ++_seq };
+                _pending[s] = p;
             }
+            // На устройство — с интервалом (не чаще раза в секунду на слот), см. PersistLocal.
+            PersistLocal(s, new DiskEntry { Data = data, Seq = p.Seq }, false);
             EnsurePump();
         }
 
@@ -722,6 +896,9 @@ namespace VhrGames.Sdk
         public async Task FlushAsync()
         {
             if (_disposed) return;
+            TryRestore();
+            // Неотправленное — сначала на устройство (вдруг до сервера не дойдёт).
+            FlushLocalWrites();
 
             for (int attempt = 0; attempt < FlushAttempts; attempt++)
             {
@@ -863,7 +1040,9 @@ namespace VhrGames.Sdk
 
                 _pending.Remove(s);
                 _lastAutoSentAt[s] = Now;
-                var r = await WriteCoreAsync(s, p.Data, AutoExpectedVersion(s), CancellationToken.None);
+                var r = await WriteCoreAsync(s, p.Data, p.Explicit ? p.Expected : AutoExpectedVersion(s), CancellationToken.None);
+                // 409 после обрыва связи: возможно, наш прошлый запрос дошёл, а ответ потерялся.
+                if (r.Error == VhrSaveError.Conflict) r = await ResolveConflictEchoAsync(s, p.Data, r, CancellationToken.None);
                 HandleAutoResult(s, p, r);
                 return r;
             });
@@ -885,6 +1064,7 @@ namespace VhrGames.Sdk
             if (r.Ok)
             {
                 OnWriteSucceeded(s, r);
+                OnWriteConfirmed(s, p.Seq, p.Data, r);
                 _log.Verbose($"Saves: автосохранение слота '{s}' → версия {r.Version} ({r.RawSize} Б, сжато {r.StoredSize} Б).");
             }
             else
@@ -934,6 +1114,10 @@ namespace VhrGames.Sdk
                         // QuotaExceeded, SlotTooLarge, SlotsLimit, BadSlot: повтор тех же данных не поможет.
                         _log.Warn($"Saves: автосохранение слота '{s}' отклонено ({r.Error}, {r.ErrorCode}). {r.Message} " +
                                   "Эти данные не сохранены; следующий QueueSave попробует снова.");
+                        // Слишком большие/неверные данные не пройдут никогда — не тащим их в следующий запуск.
+                        // Квота и лимит слотов могут освободиться: локальная копия остаётся до следующего запуска.
+                        if (r.Error == VhrSaveError.SlotTooLarge || r.Error == VhrSaveError.BadSlot)
+                            DropLocalPending(s, p.Seq);
                         break;
                 }
             }
@@ -984,14 +1168,47 @@ namespace VhrGames.Sdk
 
         private void OnFocusChanged(bool focused)
         {
-            if (!focused) FlushInBackground("потеря фокуса");
+            if (focused)
+            {
+                ResetNetworkBackoff();
+                return;
+            }
+            SaveLocalNow();
+            FlushInBackground("потеря фокуса");
         }
 
         private void OnPageHidden(int code)
-            => FlushInBackground(code == VhrWebGlLifecycleChannel.EventPageHide ? "страница закрывается" : "страница скрыта");
+        {
+            // Сначала синхронно на устройство и в IndexedDB — браузер может не дать запросу уйти.
+            SaveLocalNow();
+            FlushInBackground(code == VhrWebGlLifecycleChannel.EventPageHide ? "страница закрывается" : "страница скрыта");
+        }
+
+        private void OnPageVisible() => ResetNetworkBackoff();
+
+        private void OnBrowserOnlineChanged(bool online)
+        {
+            if (online) ResetNetworkBackoff();
+        }
+
+        // Сеть вернулась / игрок вернулся — повторить сразу, не дожидаясь паузы после обрыва связи
+        // (пауза после 429 — требование сервера — сохраняется). Только если отправка сейчас на паузе
+        // из-за сбоя: обычный возврат фокуса ритм автосохранения не меняет.
+        private void ResetNetworkBackoff()
+        {
+            if (_disposed) return;
+            if (_backoff <= 0f && _retryNotBefore <= Now) return;
+            _backoff = 0f;
+            _retryNotBefore = 0f;
+            // Неудачные попытки до сервера не дошли — интервал слота их не считает (лимит записей в
+            // минуту по-прежнему держит бюджет автосохранения).
+            foreach (var slot in _pending.Keys) _lastAutoSentAt.Remove(slot);
+            if (_pending.Count > 0) EnsurePump();
+        }
 
         private void OnQuitting()
         {
+            SaveLocalNow();
             FlushInBackground("выход из игры");
             // Цикл ожидания больше не нужен; уже начатые запросы доедут сами (если процесс успеет).
             _pumpCts?.Cancel();
@@ -1048,6 +1265,317 @@ namespace VhrGames.Sdk
             _inFlightWrites++;
             try { return await RunSerialized(slot, op); }
             finally { _inFlightWrites--; }
+        }
+
+        // ------------------------------------- локальные файлы (SDK 1.12.0+)
+
+        /// <summary>
+        /// Поднять неотправленные сохранения текущего игрока, оставшиеся с прошлых запусков, в очередь
+        /// автосохранения. Один раз на игрока; без токена — позже (проверка не чаще раза в секунду).
+        /// Данные уходят с той версией, поверх которой их сохраняли.
+        /// </summary>
+        private void TryRestore(bool force = false)
+        {
+            if (_disk == null || _disposed) return;
+            var now = Now;
+            if (!force && now - _lastRestoreTry < 1f) return;
+            _lastRestoreTry = now;
+            var user = _options.ResolveCurrentUserId();
+            if (string.IsNullOrEmpty(user) || user == _restoredUser) return;
+            _restoredUser = user;
+
+            List<VhrSavesDisk.PendingRecord> records;
+            try { records = _disk.ReadAllPending(user, m => _log.Warn("Saves: " + m)); }
+            catch (Exception e)
+            {
+                WarnDisk("Saves: не удалось прочитать неотправленные сохранения с устройства: " + e.Message);
+                return;
+            }
+
+            int restored = 0;
+            foreach (var rec in records)
+            {
+                if (!TryNormalizeSlot(rec.Slot, out var s, out _) || s != rec.Slot) continue;
+                // В этом запуске у слота уже есть данные новее (или идёт запись) — файл перепишется ими.
+                if (_pending.ContainsKey(s) || _tails.ContainsKey(s) || _diskDirty.ContainsKey(s)) continue;
+
+                var seq = ++_seq;
+                if (rec.BaseVersion.HasValue && !_known.ContainsKey(s)) _known[s] = rec.BaseVersion.Value;
+                _pending[s] = new PendingSave { Data = rec.Data, Seq = seq, Explicit = true, Expected = rec.BaseVersion };
+                _diskSeq[s] = seq;
+                _diskUser[s] = user;
+                restored++;
+            }
+            if (restored > 0)
+            {
+                _log.Info($"Saves: на устройстве неотправленных сохранений с прошлого запуска: {restored} — отправляю в облако.");
+                EnsurePump();
+            }
+        }
+
+        // Токен может прийти позже старта SDK (postMessage хоста, свой TokenProvider).
+        private async Task RestoreWhenTokenAsync()
+        {
+            try
+            {
+                for (int i = 0; i < RestoreWatchSeconds && !_disposed && _restoredUser == null; i++)
+                {
+                    await VhrAsync.DelayRealtimeAsync(1f);
+                    TryRestore(force: true);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // выход из игры
+            }
+            catch (Exception e)
+            {
+                _log.Warn("Saves: восстановление неотправленных сохранений не удалось: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Положить неподтверждённые данные слота на устройство: сразу (<paramref name="immediate"/>,
+        /// явный <see cref="SaveAsync"/>) или не чаще раза в <see cref="DiskWriteIntervalSeconds"/> на слот.
+        /// </summary>
+        private void PersistLocal(string s, DiskEntry e, bool immediate)
+        {
+            if (_disk == null || _disposed) return;
+            if (immediate || !_diskLastWrite.TryGetValue(s, out var last) || Now - last >= DiskWriteIntervalSeconds)
+            {
+                WritePendingNow(s, e);
+                return;
+            }
+            _diskDirty[s] = e;
+            EnsureDiskFlush();
+        }
+
+        private void WritePendingNow(string s, DiskEntry e)
+        {
+            if (_diskDirty.TryGetValue(s, out var dirty) && dirty.Seq <= e.Seq) _diskDirty.Remove(s);
+            if (_diskSeq.TryGetValue(s, out var written) && written > e.Seq) return; // в файле уже новее
+            var user = _options.ResolveCurrentUserId();
+            if (string.IsNullOrEmpty(user)) return; // гость: облака нет — и на диск не пишем
+
+            _diskLastWrite[s] = Now;
+            try
+            {
+                _disk.WritePending(user, new VhrSavesDisk.PendingRecord
+                {
+                    Slot = s,
+                    Data = e.Data,
+                    BaseVersion = e.Explicit ? e.Expected : AutoExpectedVersion(s),
+                    Seq = e.Seq,
+                    SavedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                });
+                _diskSeq[s] = e.Seq;
+                _diskUser[s] = user;
+                _diskWarned = false;
+            }
+            catch (Exception ex)
+            {
+                WarnDisk($"Saves: не удалось записать сохранение слота '{s}' на устройство (до отправки оно только в памяти): {ex.Message}");
+            }
+        }
+
+        private void EnsureDiskFlush()
+        {
+            if (_diskFlushRunning || _disposed) return;
+            _ = DiskFlushAsync();
+        }
+
+        // Дописывает отложенные записи на диск, когда у слота истёк интервал (реальное время).
+        private async Task DiskFlushAsync()
+        {
+            _diskFlushRunning = true;
+            try
+            {
+                while (_diskDirty.Count > 0 && !_disposed)
+                {
+                    await VhrAsync.DelayRealtimeAsync(0.2f);
+                    var now = Now;
+                    foreach (var kv in new List<KeyValuePair<string, DiskEntry>>(_diskDirty))
+                    {
+                        if (!_diskLastWrite.TryGetValue(kv.Key, out var last) || now - last >= DiskWriteIntervalSeconds)
+                            WritePendingNow(kv.Key, kv.Value);
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // выход из игры — SaveLocalNow уже записал всё синхронно
+            }
+            catch (Exception e)
+            {
+                _log.Error("Saves: сбой записи сохранений на устройство: " + e);
+            }
+            finally
+            {
+                _diskFlushRunning = false;
+            }
+        }
+
+        /// <summary>Отложенные записи — на диск сейчас (синхронно).</summary>
+        private void FlushLocalWrites()
+        {
+            if (_diskDirty.Count == 0) return;
+            foreach (var kv in new List<KeyValuePair<string, DiskEntry>>(_diskDirty)) WritePendingNow(kv.Key, kv.Value);
+        }
+
+        /// <summary>Страница скрывается / потеря фокуса / выход: всё на диск и сразу в IndexedDB (WebGL).</summary>
+        private void SaveLocalNow()
+        {
+            if (_disk == null || _disposed) return;
+            FlushLocalWrites();
+            VhrWebGlStorage.RequestSync(true);
+        }
+
+        /// <summary>
+        /// Сервер подтвердил запись данных с номером <paramref name="seq"/>: обновить локальную копию
+        /// облачной версии и убрать pending-файл, если новее ничего не накопилось (иначе — переписать
+        /// его поверх новой версии, чтобы после перезапуска не получить ложный конфликт).
+        /// </summary>
+        private void OnWriteConfirmed(string s, long seq, string data, VhrSaveWriteResult r)
+        {
+            if (_disk == null) return;
+            WriteCacheSafe(s, data, r.Version, r.UpdatedAt);
+
+            // Новее ждёт записи на диск — запишется уже с новой версией (AutoExpectedVersion).
+            if (_diskDirty.TryGetValue(s, out var dirty) && dirty.Seq > seq) return;
+            if (_pending.TryGetValue(s, out var newer) && newer.Seq > seq)
+            {
+                if (_diskSeq.TryGetValue(s, out var ws) && ws == newer.Seq)
+                    WritePendingNow(s, new DiskEntry { Data = newer.Data, Seq = newer.Seq, Explicit = newer.Explicit, Expected = newer.Expected });
+                return;
+            }
+            DropLocalPending(s, seq);
+        }
+
+        /// <summary>
+        /// Убрать pending-файл слота, если в нём данные не новее <paramref name="seq"/>; данные слота,
+        /// ещё ждущие отправки в памяти, при этом остаются на устройстве.
+        /// </summary>
+        private void DropLocalPending(string s, long seq)
+        {
+            if (_disk == null) return;
+            if (_diskDirty.TryGetValue(s, out var dirty))
+            {
+                if (dirty.Seq > seq) return; // новее ждёт записи — файл перепишется им
+                _diskDirty.Remove(s);
+            }
+            if (_diskSeq.TryGetValue(s, out var written) && written > seq) return; // в файле уже новее
+            DeletePendingFile(s);
+            if (_pending.TryGetValue(s, out var p))
+                WritePendingNow(s, new DiskEntry { Data = p.Data, Seq = p.Seq, Explicit = p.Explicit, Expected = p.Expected });
+        }
+
+        /// <summary>Данные слота отброшены целиком (игра взяла облачную версию) — убрать pending-файл.</summary>
+        private void DropLocalPending(string s)
+        {
+            if (_disk == null) return;
+            _diskDirty.Remove(s);
+            DeletePendingFile(s);
+        }
+
+        private void DeletePendingFile(string s)
+        {
+            _diskSeq.Remove(s);
+            if (!_diskUser.TryGetValue(s, out var user)) return;
+            _diskUser.Remove(s);
+            try { _disk.DeletePending(user, s); }
+            catch (Exception e) { WarnDisk($"Saves: не удалось удалить локальную копию слота '{s}': {e.Message}"); }
+        }
+
+        private void WriteCacheSafe(string s, string data, long version, string updatedAt)
+        {
+            if (_disk == null || version <= 0) return;
+            var user = _options.ResolveCurrentUserId();
+            if (string.IsNullOrEmpty(user)) return;
+            try
+            {
+                _disk.WriteCache(user, new VhrSavesDisk.CacheRecord { Slot = s, Data = data ?? string.Empty, Version = version, UpdatedAt = updatedAt });
+            }
+            catch (Exception e)
+            {
+                WarnDisk($"Saves: не удалось обновить локальную копию слота '{s}': {e.Message}");
+            }
+        }
+
+        private void DeleteCacheSafe(string s)
+        {
+            if (_disk == null) return;
+            var user = _options.ResolveCurrentUserId();
+            if (string.IsNullOrEmpty(user)) return;
+            try { _disk.DeleteCache(user, s); }
+            catch (Exception e) { WarnDisk($"Saves: не удалось удалить локальную копию слота '{s}': {e.Message}"); }
+        }
+
+        private bool TryReadCache(string s, out VhrSavesDisk.CacheRecord cache)
+        {
+            cache = null;
+            if (_disk == null) return false;
+            var user = _options.ResolveCurrentUserId();
+            if (string.IsNullOrEmpty(user)) return false;
+            try { return _disk.TryReadCache(user, s, out cache); }
+            catch (Exception e)
+            {
+                WarnDisk($"Saves: не удалось прочитать локальную копию слота '{s}': {e.Message}");
+                return false;
+            }
+        }
+
+        private void WarnDisk(string message)
+        {
+            // Одно предупреждение на серию сбоев диска, дальше — только подробный лог.
+            if (_diskWarned) _log.Verbose(message);
+            else
+            {
+                _diskWarned = true;
+                _log.Warn(message);
+            }
+        }
+
+        /// <summary>
+        /// <c>409</c> после обрыва связи: если на сервере уже ровно наши данные — наш прошлый запрос
+        /// дошёл, а ответ потерялся; это успех (версия — серверная). Иначе — конфликт как есть.
+        /// </summary>
+        private async Task<VhrSaveWriteResult> ResolveConflictEchoAsync(
+            string s, string data, VhrSaveWriteResult conflict, CancellationToken ct)
+        {
+            if (conflict.ServerVersion <= 0) return conflict; // слота на сервере нет — это не наша запись
+            var current = await LoadCoreAsync(s, ct);
+            if (current == null || !current.Found || !string.Equals(current.Data, data, StringComparison.Ordinal))
+                return conflict;
+
+            _log.Verbose($"Saves: конфликт версий слота '{s}', но на сервере уже наши данные (версия {current.Version}) — " +
+                         "прошлая запись дошла, а ответ потерялся. Считаю записанным.");
+            int rawSize = 0;
+            try { rawSize = Encoding.UTF8.GetByteCount(data); }
+            catch { /* только для отчёта */ }
+            return new VhrSaveWriteResult { Slot = s, Version = current.Version, UpdatedAt = current.UpdatedAt, RawSize = rawSize };
+        }
+
+        // Загрузка не удалась из-за связи/сервера — можно отдать локальную копию облачной версии.
+        private static bool IsTransientLoadError(VhrSaveError e)
+            => e == VhrSaveError.Network || e == VhrSaveError.Unknown || e == VhrSaveError.RateLimited || e == VhrSaveError.Disabled;
+
+        // Явная запись не дошла по временной причине — данные стоит догрузить автосохранением.
+        private bool IsTransientWriteError(VhrSaveWriteResult r)
+        {
+            switch (r.Error)
+            {
+                case VhrSaveError.Network:
+                case VhrSaveError.RateLimited:
+                case VhrSaveError.Disabled:
+                    return true;
+                case VhrSaveError.Unknown:
+                    return r.ErrorCode != "sdk_update_required";
+                case VhrSaveError.NotAuthenticated:
+                    // Истёкший токен вошедшего игрока — временно; гостю облако недоступно вовсе.
+                    return !string.IsNullOrEmpty(_options.ResolveCurrentUserId());
+                default:
+                    return false;
+            }
         }
 
         // ------------------------------------------------------- транспорт
@@ -1478,14 +2006,19 @@ namespace VhrGames.Sdk
         public void Dispose()
         {
             if (_disposed) return;
+            // Неотправленное остаётся на устройстве — догрузится при следующем запуске.
+            SaveLocalNow();
             _disposed = true;
             Application.focusChanged -= OnFocusChanged;
             Application.quitting -= OnQuitting;
             VhrWebGlLifecycleChannel.PageHidden -= OnPageHidden;
+            VhrWebGlLifecycleChannel.PageVisible -= OnPageVisible;
+            VhrWebGlLifecycleChannel.BrowserOnlineChanged -= OnBrowserOnlineChanged;
             _pumpCts?.Cancel();
             _pumpCts = null;
             if (_pending.Count > 0)
-                _log.Warn($"Saves: сервис уничтожен, не отправлено автосохранений: {_pending.Count}.");
+                _log.Warn($"Saves: сервис уничтожен, не отправлено автосохранений: {_pending.Count}" +
+                          (_disk != null ? " (лежат на устройстве и уйдут при следующем запуске)." : "."));
             _pending.Clear();
             OnConflict = null;
             OnAutoSaveResult = null;

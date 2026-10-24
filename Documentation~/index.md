@@ -13,6 +13,7 @@
 - [4. Конфигурация (`VhrSdkOptions`)](#4-конфигурация-vhrsdkoptions)
 - [5. Инициализация и состояние подключения](#5-инициализация-и-состояние-подключения)
 - [6. Справочник API](#6-справочник-api)
+  - [6.9 Работа без связи (`IVhrConnection`, SDK 1.12.0+)](#69-ivhrconnection--работа-без-связи-sdk-1120)
 - [7. Модель идемпотентности](#7-модель-идемпотентности)
 - [8. Траблшутинг](#8-траблшутинг)
 
@@ -226,7 +227,8 @@ PurchaseAsync(null, itemId, quantity, externalId)
 
 Товары и достижения заводятся в кабинете разработчика на сайте (игра → **Товары** /
 **Достижения**; `https://vhrgames.ru/dev/games`, ачивки — `/dev/games/{gameId}/achievements`).
-В игре — только чтение. Id игры SDK берёт из claim `gid` токена, иначе `VhrSdkOptions.GameId`.
+В игре — чтение и (SDK 1.12.0+) выдача ачивок своей игры. Id игры SDK берёт из claim `gid` токена,
+иначе `VhrSdkOptions.GameId`.
 
 | Метод | HTTP | Ответ |
 |---|---|---|
@@ -234,6 +236,7 @@ PurchaseAsync(null, itemId, quantity, externalId)
 | `Economy.GetOwnedItemsAsync()` | `GET {Bridge}/api/inventory?gameId=<gid>` | `VhrOwnedItem[]` — `itemId`, `quantity`, `lastPurchasedAt` |
 | `Achievements.GetForCurrentGameAsync()` | `GET {Games}/api/Achievements/games/<gid>` | `VhrAchievement[]` |
 | `Achievements.GetMineForCurrentGameAsync()` | `GET {Games}/api/Achievements/me` + фильтр по игре | `VhrUserAchievement[]` |
+| `Achievements.UnlockAsync(slug)` (1.12.0+) | `POST {Games}/api/Achievements/unlock` `{ code: "game.<gid>.<slug>" }` | `VhrUnlockResult { unlocked, queued, code, achievement }`; без связи — в очередь ([6.9](#69-ivhrconnection--работа-без-связи-sdk-1120)) |
 
 В Unity Editor каталог виден в окне **`VHR → Каталог игры`** (песочный ключ): товары и
 достижения с ID, ценой/описанием, иконкой и статусом, «Копировать ID», «Обновить»,
@@ -369,15 +372,69 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
 Тело `POST /api/purchase`: `{ userId, itemId, quantity, externalId, gameId }` (заголовки
 `X-Vhr-Game-Id`, `X-Vhr-Sdk-Version: 1.9.0`, `Authorization: Bearer <игровой токен>`).
 
-### 6.2 `IVhrLeaderboard`
+### 6.2 `IVhrLeaderboard` — таблицы лидеров (несколько на игру с SDK 1.12.0)
 
-| Метод | HTTP (`{GamesBaseUrl}`) | Запрос | Ответ |
+Доступ: `VhrSdk.Leaderboard` или внедрение `IVhrLeaderboard` (VContainer). Базовый URL — `GamesBaseUrl`
+(UnityGamesMS, `LeaderboardController`); `{gameId}` — `gid` токена, иначе `VhrSdkOptions.GameId`.
+Отправка — только с токеном игрока (игровой или песочный); чтение — и анонимно.
+
+**Code-first.** Таблица создаётся при первой отправке счёта с новым id (`board`); подсказки `title`,
+`sort`, `format` применяются только при создании, потом таблицей управляет кабинет разработчика.
+Id таблицы: `Trim().ToLowerInvariant()`, пусто → `default`, затем `^[a-z0-9][a-z0-9_-]{0,31}$` (SDK
+проверяет до запроса: `VhrSdkException` с `Code = ServerCode = "bad_board"`). До 50 таблиц на игру.
+Счёт — `long`, |score| ≤ 2^53−1 (иначе `bad_request` до запроса). Сервер хранит лучший результат по
+направлению таблицы в бакетах `all`, `d:yyyy-MM-dd`, `w:YYYY-Www`, `m:yyyy-MM` (UTC); при равенстве
+выше тот, кто достиг счёта раньше.
+
+| Член | HTTP (`{GamesBaseUrl}`) | Запрос | Результат |
 |---|---|---|---|
-| `GetGlobalAsync(limit = 100)` | `GET /api/Leaderboard/global?limit=` | — | `VhrLeaderboardRow[]` (501 → пустой массив) |
-| `GetForGameAsync(gameId, limit = 100)` | `GET /api/Leaderboard/games/{gameId}?limit=` | — | `VhrLeaderboardRow[]` (501 → пустой массив) |
-| `SubmitScoreAsync(gameId, score)` | `POST /api/Leaderboard/score` | `{ gameId, score }` | `VhrLeaderboardRow` |
+| `SubmitAsync(score)` | `POST /api/Leaderboard/score` | `{ gameId, score, board: "default", title: "", sort: "", format: "" }` | `VhrScoreResult` |
+| `SubmitAsync(board, score)` | то же | `{ gameId, score, board, title: "", sort: "", format: "" }` | `VhrScoreResult` |
+| `SubmitAsync(board, score, options)` | то же | `+ title (≤ 64), sort: "desc"\|"asc", format: "number"\|"time"` | `VhrScoreResult` |
+| `GetTopAsync(board = null, period = AllTime, limit = 10)` | `GET /api/Leaderboard/games/{gameId}/boards/{board}?period=all\|day\|week\|month&limit=1..100` | — | `VhrBoardPage` (+ батч ников) |
+| `GetBoardsAsync()` | `GET /api/Leaderboard/games/{gameId}/boards` | — | `VhrBoardInfo[]` |
+| `GetGlobalAsync(limit = 100)` | `GET /api/Leaderboard/global?limit=` | — | `VhrLeaderboardRow[]` (основные таблицы «больше — лучше» всех игр) |
+| `GetForGameAsync(gameId, limit = 100)` `[Obsolete]` | `GET /api/Leaderboard/games/{gameId}?limit=` | — | `VhrLeaderboardRow[]` (основная таблица, старый формат) |
+| `SubmitScoreAsync(gameId, score)` `[Obsolete]` | `POST /api/Leaderboard/score` | `{ gameId, score, board: "default" }` | `VhrLeaderboardRow` (без клампа `long`) |
 
-`VhrLeaderboardRow`: `id`, `userId`, `name`, `gameId`, `score`, `createdAt`, `isCurrentUser`.
+Вместо незаданных подсказок SDK шлёт пустые `title`/`sort`/`format` — сервер считает их «не задано» (`desc`, `number`, название по id). `gameId` в теле дублирует токен для совместимости.
+
+**Ответы → типы SDK:**
+
+- `POST score` → `{ id, userId, playerName, gameId, score, createdAt, board, improved, best, rank }` →
+  `VhrScoreResult { accepted (true; false — только если сервер явно пришлёт "accepted": false), improved,
+  best, rank, board }`. `board` принимается строкой или объектом `{ id, … }`.
+- `GET boards/{board}` → `{ board: { id, title, sort, format, suffix, isPrimary }, period, entries: [ { rank,
+  userId | null, score, updatedAt, isCurrentUser } ], me: { rank, score } | null, total }` →
+  `VhrBoardPage { board: VhrBoardInfo, period: VhrLeaderboardPeriod, entries: VhrBoardEntry[], me: VhrBoardEntry
+  | null, total }`. `JsonUtility` превращает `"me": null` в пустой объект — SDK отдаёт `me = null`, если
+  `rank` не положительный. У `me` — `isCurrentUser = true`, `userId` из строки топа или `sub` токена.
+  `404 board_not_found` (в таблицу ещё никто не отправлял счёт) → пустая страница (`entries = []`,
+  `me = null`, `total = 0`, мета по умолчанию), а не исключение.
+- `GET boards` → `{ primary, boards: [ { id, title, sort, format, suffix, isPrimary, hidden, order } ] }` →
+  `VhrBoardInfo[]` по порядку вкладок. Нет таблиц — сервер отдаёт синтезированную `default`.
+- `sort`: `desc` → `VhrBoardSort.HigherIsBetter`, `asc` → `LowerIsBetter`; `format`: `number` →
+  `VhrScoreFormat.Number`, `time` → `Time` (маппинг ручной — `JsonUtility` не читает enum из строк).
+
+**Ники.** `GetTopAsync` собирает `userId` строк и «меня» и резолвит их одним вызовом
+`IVhrProfile.ResolveNamesAsync` (`POST {AuthBaseUrl}/api/Auth/users/resolve`, пачки по 100). Скрытый профиль
+(`userId = null`), пустой ник, ошибка резолва — `"Игрок"` (страница не падает); `sbx_*` — `"Тестовый игрок"`
+без запроса. `VhrSdk` и `VhrSdkLifetimeScope` передают сервису общий `IVhrProfile`; конструктор без профиля
+создаёт свой `VhrProfileService`.
+
+**Формат** (`VhrScoreFormatter`, `VhrBoardEntry.formatted`): `Number` — разряды через пробел + суффикс
+таблицы (`12345`, «очков» → «12 345 очков»); `Time` — миллисекунды → `m:ss.fff` или `h:mm:ss.fff`
+(`62345` → «1:02.345», `3723004` → «1:02:03.004»), суффикс не добавляется.
+
+**Ошибки:** `400 bad_board` / `bad_request`, `409 board_limit` (`Code = "conflict"`), `401` (гость на
+отправке) — `VhrSdkException` с кодом сервера в `ServerCode`.
+
+**Без связи (SDK 1.12.0+):** сеть, таймаут, 5xx, 408, 429 и 401 вошедшего игрока не бросают исключение —
+счёт встаёт в очередь на устройстве и уходит сам, ответ — `VhrScoreResult { accepted = false, queued = true,
+board }` (`improved`/`best`/`rank` неизвестны). Устаревший `SubmitScoreAsync` в этом случае возвращает строку с
+присланным счётом и `id = 0`. Подробно — [6.9](#69-ivhrconnection--работа-без-связи-sdk-1120).
+
+`VhrLeaderboardRow` (старый формат): `id`, `userId`, `name`, `gameId`, `score`, `createdAt`, `isCurrentUser`.
 
 ### 6.3 `IVhrServers`  *(по умолчанию noop)*
 
@@ -399,6 +456,7 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
 
 `InitializeAsync`, `IsInitialized`, `Economy`, `Ads`, `Saves`, `Leaderboard`, `Servers`,
 `Achievements`, `Profile`, `Friends`, `PlayerStats`, `GameSessions`, `Tournaments`,
+`Connection` (1.12.0+, [6.9](#69-ivhrconnection--работа-без-связи-sdk-1120)),
 `Relay`, `Lobby`, `Session`, `ConnectionState`, `SdkVersion`, `ResetForTests()`.
 
 ### 6.6 Транспортный seam
@@ -410,7 +468,9 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
 `not_implemented`, `connection_error`, `http_error`, `deserialize_error`); код из
 тела ответа моста (`{ "code": "..." }`) — в `ServerCode`, тело — в `ResponseBody`, заголовок
 `Retry-After` (секунды или HTTP-дата) — в `RetryAfterSeconds` (SDK 1.11.0+; транспорт передаёт его
-в `VhrHttpResponse.RetryAfter` для ответов с ошибкой).
+в `VhrHttpResponse.RetryAfter` для ответов с ошибкой). SDK 1.12.0+: каждый ответ (кроме отмены
+вызывающим) обновляет `VhrSdk.Connection.IsOnline` — «нет связи» = статус 0, 502, 504 или 503 без кода
+приложения.
 
 ### 6.7 `IVhrAds` — реклама (SDK 1.8.0+)
 
@@ -500,9 +560,10 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
 - 409 → слот в конфликте: данные придерживаются, `OnConflict(slot, serverVersion)`, запись слота на
   паузе. Снимается `LoadAsync(slot)` (придержанное отбрасывается) или успешным `SaveAsync(slot, …)`;
 - 429 (на любой записи/удалении — лимит общий) → пауза `Retry-After` для всех автосохранений, данные в очереди;
-- нет связи / 5xx → повтор с паузой 5 → 10 → 20 → 40 → 60 с; `saves_disabled` → 60 с; нет токена → 30 с
-  (без запроса); `426 sdk_update_required`, `QuotaExceeded`, `SlotTooLarge`, `SlotsLimit`, `BadSlot` —
-  данные отбрасываются (повтор не поможет), следующий `QueueSave` пробует снова;
+- нет связи / 5xx → повтор с паузой 5 → 10 → 20 → 40 → 60 с (SDK 1.12.0+: событие `online`,
+  `visibilitychange → visible` или возврат фокуса сбрасывают паузу — повтор сразу); `saves_disabled` → 60 с;
+  нет токена → 30 с (без запроса); `426 sdk_update_required`, `QuotaExceeded`, `SlotTooLarge`, `SlotsLimit`,
+  `BadSlot` — данные отбрасываются из памяти (повтор не поможет), следующий `QueueSave` пробует снова;
 - явный `SaveAsync`/`DeleteAsync` отменяет автосохранения слота, накопленные **до** вызова;
 - **flush сразу**: `Application.focusChanged(false)` (на телефоне приходит и перед паузой приложения),
   `Application.quitting`, а на WebGL — `visibilitychange → hidden` и `pagehide`
@@ -510,6 +571,28 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
   Закрытие вкладки — «лучшее усилие»;
 - WebGL: ожидания — `VhrAsync` (кадры + `Time.realtimeSinceStartup`, пауза игры не мешает), TCS с
   `RunContinuationsAsynchronously`, без `ConfigureAwait(false)`, `Task.Delay` и `CancelAfter`.
+
+**Сначала локально (SDK 1.12.0+)** — файлы `Application.persistentDataPath/vhr-sdk/saves/{gameId}/{userId}/`
+(`userId` — `sub` токена; гость и Editor Simulation файлов не пишут; на WebGL — IndexedDB, см. 6.9):
+- `QueueSave` кладёт данные слота в `slot_{slot}.pending.json` = `{ v, slot, data, baseVersion, seq, savedAt }`
+  (`baseVersion`: `null` | `0` | `N` — версия, поверх которой писать): первая запись сразу, дальше не чаще
+  раза в секунду на слот и синхронно при `focusChanged(false)`, `visibilitychange → hidden`, `pagehide`,
+  `quitting`, `FlushAsync`; `SaveAsync` — сразу, до запроса. Запись атомарная (`*.tmp` + замена);
+- подтверждение сервера → pending-файл удаляется (если для слота не накопилось новее; иначе он
+  переписывается поверх новой версии — чтобы после перезапуска не было ложного конфликта), а
+  `slot_{slot}.cache.json` = `{ v, slot, data, version, updatedAt }` обновляется; успешная загрузка тоже
+  обновляет кэш, `NotFound` и `DeleteAsync` его удаляют;
+- старт: как только известен игрок (токен может прийти позже — ждём до 120 с, плюс проверка при каждом
+  вызове `Saves`), pending-файлы поднимаются в очередь автосохранения и уходят с
+  `expectedVersion = baseVersion`;
+- `LoadAsync`: есть неотправленное (слот не в конфликте) → оно, `FromPending = true`, без запроса; сеть /
+  5xx / 429 / `Disabled` → кэш, `FromCache = true` (`Found = true`, `Error = None`, версия кэша становится
+  известной версией слота — запись поверх чужой версии даст конфликт); иначе — как раньше;
+- `SaveAsync`: временная ошибка (сеть, 5xx, 429, `Disabled`, 401 вошедшего игрока) — результат ошибочный,
+  но данные встают в очередь автосохранения с этим же `expectedVersion` (и снимают конфликт слота —
+  это решение игры); окончательная ошибка или отмена `ct` — pending-файл удаляется;
+- **409 после обрыва связи** (автосохранение и `SaveAsync`): при `serverVersion > 0` SDK перечитывает слот;
+  на сервере ровно наши данные → успех (прошлый запрос дошёл, а ответ потерялся), иначе — конфликт как раньше.
 
 **Лимиты и квота** (настройки платформы, дефолты): слот ≤ 256 КБ сжатого (`gzip` UTF-8) и ≤ 1 МБ сырого;
 ≤ 10 слотов на игрока в игре; 12 записей/удалений и 60 чтений в минуту (игрок + игра); квота игры —
@@ -521,6 +604,92 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
 **Editor Simulation:** `VhrEditorSaves` — файлы `Library/VhrSdk/SimSaves/slot_<slot>.json`, те же версии,
 `expectedVersion` и конфликты, gzip-размер, 256 КБ / 1 МБ, 10 слотов, 1024 КБ суммарно
 (`storage_quota_exceeded`), 12 записей и 60 чтений в минуту (`rate_limited` с паузой).
+
+### 6.9 `IVhrConnection` — работа без связи (SDK 1.12.0+)
+
+Доступ: `VhrSdk.Connection` или внедрение `IVhrConnection` (VContainer) — один общий экземпляр
+(`VhrOutbox`); им же пользуются сервисы SDK.
+
+| Член | Описание |
+|---|---|
+| `bool IsOnline` / `event Action<bool> OnlineChanged` | Связь с сервисами VHR: последний запрос SDK получил ответ (любой, кроме 502/504 и 503 без кода) и браузер не сообщил `offline`. Начальное значение — `navigator.onLine` (вне WebGL — `true`) |
+| `int PendingCount` / `event Action<int> PendingChanged` | Операции текущего игрока в очереди (сохранения — отдельно: `IVhrSaves.HasPendingSaves`) |
+| `Task FlushAsync()` | Отправить очередь сейчас (паузы после сбоев сбрасываются, кроме `Retry-After`) и ждать не дольше 30 с; без исключений |
+| `event Action<VhrDroppedOperation> OnDropped` | Выброшено без доставки: `Kind`, `Target`, `Value`, `Reason` (`expired` / `limit` / код сервера / `http_{статус}`), `HttpStatus`, `Message`, `QueuedAtUtc` |
+
+**Операции, которые встают в очередь** (все — `POST` на `GamesBaseUrl`; на сервере идемпотентны):
+
+| Вызов | HTTP | Тело | Без связи | Схлопывание в очереди |
+|---|---|---|---|---|
+| `Leaderboard.SubmitAsync(…)`, `SubmitScoreAsync` `[Obsolete]` | `/api/Leaderboard/score` | как в [6.2](#62-ivhrleaderboard--таблицы-лидеров-несколько-на-игру-с-sdk-1120) | `VhrScoreResult { accepted = false, queued = true }` (старый — строка со счётом, `id = 0`) | по таблице — максимум и минимум ожидающих (направление таблицы клиенту может быть неизвестно; сервер возьмёт лучший); тела пересобираются с подсказками последней отправки |
+| `Achievements.UnlockAsync(slug)` | `/api/Achievements/unlock` | `{ code: "game.{gameId}.{slug}" }` | `VhrUnlockResult { queued = true, code }` | одна на код |
+| `Tournaments.SubmitAsync(id, score)`, `SubmitScoreAsync` | `/api/Tournaments/{id}/score` | `{ score }` | `VhrTournamentScoreResult { queued = true }` (старый — присланный счёт) | максимум |
+| `GameSessions.EndAsync(sessionId, …)` | `/api/GameSessions/{id}/end` | `{ outcome, score, durationSeconds }` | без исключения | последнее |
+
+Не встают в очередь (только онлайн): покупки и экономика (нужно подтверждение игрока), `HeartbeatAsync`,
+друзья, лобби, чтение таблиц, профилей и ачивок.
+
+**`UnlockAsync`.** Код строится как на сервере (`GameAchievementRules.BuildCode`): полный `game.…` — как
+есть; иначе `game.{gameId}.{slug}`, где `gameId` — GUID (`D`, нижний регистр) из `gid` токена или
+`VhrSdkOptions.GameId`, slug — в нижнем регистре, пробелы → `_`; пустой — `bad_request` до запроса. Ответ
+`{ unlocked, achievement }` → `VhrUnlockResult { unlocked, code, achievement }` (`unlocked = false` — уже была
+открыта). Подтверждённые сервером коды запоминаются на время запуска: повторный вызов — без запроса
+(`unlocked = false`). Ошибки сервера: `400 platform_achievement`, `403 game_mismatch`, `404` (нет ачивки).
+
+**`Tournaments.SubmitAsync`** проверяет до запроса id (GUID) и счёт (0…10^12, как сервер) —
+`VhrSdkException("bad_request")`. Ответ `{ bestScore }` → `VhrTournamentScoreResult { accepted, bestScore,
+tournamentId }`. Сервер принимает результат только у активного турнира: отложенный, доставленный после
+окончания, будет отклонён (`400` → `OnDropped`).
+
+**Сначала онлайн.** Вызов отправляет запрос сразу — игре нужен итог (рекорд, место, «открыто»). Браузер
+точно офлайн (`navigator.onLine === false`) — сразу в очередь, без ожидания; иначе в худшем случае вызов
+ждёт `RequestTimeoutSeconds` (+5 с страховки транспорта). Классификация ответа:
+
+| Ответ | Онлайн-вызов | Операция из очереди |
+|---|---|---|
+| 2xx | результат | удалена (доставлена) |
+| нет ответа / таймаут (статус 0), 5xx (кроме 501), 408 | в очередь | повтор: пауза 2 → 4 → 8 → 16 → 32 → 60 с + до 20% джиттера |
+| 429 | в очередь | повтор после `Retry-After` (нет — 60 с, не больше 5 мин) |
+| 401 (после попытки `VhrApiClient` обновить токен) | в очередь | повтор, когда хост пришлёт новый токен (или через 30 с) |
+| 400 `no_session` (ачивка: сессию игры ещё не записали) | в очередь | повтор через 5 мин / при следующем запуске |
+| прочие 4xx, 501 | `VhrSdkException`, как раньше | выброс + `OnDropped` + предупреждение |
+| отмена `ct` | `OperationCanceledException`, в очередь не ставится | — |
+
+Гость (нет токена или токен не JWT — нет `sub`): в очередь ставится только `EndAsync` (сессии бывают
+анонимными), остальные вызовы бросают исключение, как раньше.
+
+**Когда отправляется очередь:** при старте SDK (как только есть токен игрока), сразу после постановки,
+после любого успешного запроса SDK (связь вернулась), по событиям `online` и `visibilitychange → visible`
+(WebGL, `VhrLifecycleBridge.jslib`), при возврате фокуса и по таймеру. Строго по одной операции, самые
+ранние первыми; сбой связи / 429 / 401 прерывает проход до конца паузы; браузер офлайн — не шлёт вовсе.
+Ожидания — по кадрам и `Time.realtimeSinceStartup` (пауза игры и `timeScale = 0` не мешают), без
+тредпула, `Task.Delay` и `CancelAfter`.
+
+**Файл очереди:** `Application.persistentDataPath/vhr-sdk/outbox-{gameId}.json`:
+
+```json
+{"v":1,"items":[{"id":"…","kind":"lb.score","userId":"<sub>","createdAt":1730000000000,"attempts":0,
+  "nextAttemptAt":0,"key":"lb.score:survival","target":"survival","value":42,"payload":"{\"gameId\":…}"}]}
+```
+
+`kind`: `lb.score` | `ach.unlock` | `tour.score` | `session.end`; время — Unix, мс UTC; `payload` — JSON-тело
+запроса строкой. Файл переписывается атомарно после каждого изменения (`*.tmp` + `File.Replace`; если
+запись оборвалась между шагами, читается `*.tmp`), пустая очередь — файл удаляется. Разбор — собственный
+(не `JsonUtility`): битый файл → пустая очередь, копия `outbox-{gameId}.json.bad` и предупреждение; негодные
+элементы пропускаются по одному.
+- отправляются только операции текущего игрока (`sub` токена = `userId`); чужие ждут своего игрока;
+- TTL — 14 дней от первой постановки (`Reason = "expired"`); лимит — 300 операций (`"limit"`: выбрасываются
+  сначала завершения сессий, потом счёт, ачивки — последними; внутри вида — самые старые).
+
+**WebGL и IndexedDB.** `persistentDataPath` на WebGL — IDBFS (файлы в памяти вкладки). После каждой записи SDK
+просит `FS.syncfs(false)` (`VhrStorageBridge.jslib`: одна синхронизация на серию записей через ~1 с), а при
+`visibilitychange → hidden` и `pagehide` — немедленную (в микрозадаче — после всех обработчиков события,
+чтобы попали и сделанные в них записи). Окно риска — ~1 с между записью и синхронизацией, если вкладку
+убьют без событий страницы. Очистка данных сайта и приватное окно стирают и очередь.
+
+**Editor.** Очередь — в `persistentDataPath` редактора и переживает перезапуск Play; в Live-песочнице —
+операции тестового игрока `sbx_*` (его ключом). Simulation-сохранения локальных pending/cache-файлов не пишут
+(«облако» и так на диске).
 
 ## 7. Модель идемпотентности
 
@@ -554,8 +723,18 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
 | Реклама всегда `Unavailable` на WebGL | Игра открыта не со страницы vhrgames.ru, реклама выключена платформой, детский аккаунт, адблок или нет объявления | Проверяйте на vhrgames.ru; это нормальный исход — продолжайте игру / прячьте кнопку |
 | Реклама часто `Cooldown` | Лимиты частоты платформы (interstitial ~ раз в 90 с, rewarded ~ 20/ч) или повторный вызов во время показа | Не вызывайте чаще; предложите rewarded позже |
 | Состояние подключения застряло в `Faulted` | Мост недоступен на init | Не фатально; вызовы ретраятся по требованию. Проверьте сеть/URL |
+| Лидерборд → `bad_board` | Id таблицы не по правилам (`a-z0-9_-`, до 32 символов, первый — буква/цифра) | Исправьте id: `"survival"`, `"level_1"`; SDK отклоняет его до запроса |
+| Лидерборд → `board_limit` (409) | У игры уже 50 таблиц, новая не создаётся | Удалите лишние таблицы в кабинете (игра → «Таблицы лидеров») или переиспользуйте id |
+| Лидерборд: время показывается числом / «больше — лучше» вместо «меньше» | Таблица создана первой отправкой без `VhrBoardOptions` (подсказки применяются только при создании) | Кабинет → таблица → формат; направление — после сброса таблицы |
+| Лидерборд: ники «Игрок» | Профиль игрока скрыт, ник пуст или резолв ников (`users/resolve`) не удался | Ожидаемо; при ошибке резолва — предупреждение `[VHR Leaderboard]` в консоли |
 | Сохранения → `NotAuthenticated` | Игрок не вошёл на vhrgames.ru (гость), игра открыта не со страницы VHR, в Editor нет песочного ключа | Ожидаемо для гостя — сохраняйте локально (`PlayerPrefs`); в Editor — Simulation или ключ в окне VHR |
 | Сохранения → `Disabled` (`game_not_found`) | Реальный игрок в неопубликованной игре | Проверяйте черновик в Editor Live; после публикации заработает |
 | Сохранения → `RateLimited` | `SaveAsync` слишком часто (> 12 записей в минуту на игрока) | Используйте `QueueSave` (+ `FlushAsync` в ключевых точках) |
 | Сохранения → `QuotaExceeded` | Квота облачных сохранений игры исчерпана | Кабинет разработчика → игра → «Облачные сохранения» → пакет; уменьшите размер сохранений |
 | Автосохранение «замолчало», в консоли «конфликт версий» | Слот перезаписан с другого устройства/вкладки, `OnConflict` не обработан | Подпишитесь на `OnConflict`: `LoadAsync` (взять облачное) или `SaveAsync(slot, data, serverVersion)` |
+| Рекорд / ачивка / турнир вернули `queued = true` | Сервер был недоступен (сеть, таймаут, 5xx, 429, истёкший токен) | Ожидаемо: операция в очереди на устройстве и уйдёт сама (`VhrSdk.Connection.PendingCount`). Покажите «отправится, когда появится связь» |
+| Отправка рекорда «висит» ~15–20 с без сети | Браузер считает, что сеть есть, — SDK ждёт таймаут запроса | Ожидаемо; уменьшите `RequestTimeoutSeconds`. При `navigator.onLine = false` счёт встаёт в очередь сразу |
+| `PendingCount` не уменьшается | Нет связи (`IsOnline = false`), токен не обновляется (401), или ждёт `no_session` | Проверьте сеть / страницу VHR; ачивка без записанной сессии игры повторяется раз в 5 минут и при следующем запуске |
+| В консоли «выброшено из очереди без доставки», `OnDropped` | Сервер окончательно отклонил операцию (турнир закончился, `board_limit`, ачивки нет) или 14 дней без связи | Смотрите `Reason` / `Message`; для турнира после окончания — ожидаемо |
+| «файл очереди отложенных операций повреждён» | Обрезанный или испорченный файл (очистка IndexedDB посреди записи и т.п.) | Очередь начата заново, копия — `outbox-{gameId}.json.bad` |
+| `LoadAsync` вернул `FromCache = true` / `FromPending = true` | Сервер недоступен — локальная копия облачной версии / есть неотправленное сохранение этого устройства | Можно играть; неотправленное уйдёт само, запись поверх чужой версии даст `OnConflict` |

@@ -20,7 +20,7 @@ namespace VhrGames.Sdk
     public static class VhrSdk
     {
         /// <summary>SDK semantic version. Mirrored into the build marker and sent as <c>X-Vhr-Sdk-Version</c>.</summary>
-        public const string SdkVersion = "1.11.0";
+        public const string SdkVersion = "1.12.0";
 
         private static VhrSession _session;
         private static VhrSdkOptions _options;
@@ -38,7 +38,16 @@ namespace VhrGames.Sdk
         /// </summary>
         public static IVhrEconomy Economy { get; private set; }
 
-        /// <summary>Leaderboard service. Null until initialized.</summary>
+        /// <summary>
+        /// Таблицы лидеров (SDK 1.12.0+: несколько таблиц на игру — режимы, трассы; таблица
+        /// создаётся сама при первой отправке счёта; см. <see cref="IVhrLeaderboard"/>).
+        /// Null until initialized.
+        /// </summary>
+        /// <example><code>
+        /// var r = await VhrSdk.Leaderboard.SubmitAsync("survival", wave);
+        /// if (r.improved) ShowNewRecord(r.best, r.rank);
+        /// var top = await VhrSdk.Leaderboard.GetTopAsync("survival");
+        /// </code></example>
         public static IVhrLeaderboard Leaderboard { get; private set; }
 
         /// <summary>Servers service. Null until initialized.</summary>
@@ -87,6 +96,19 @@ namespace VhrGames.Sdk
         /// VhrSdk.Saves.QueueSaveJson("default", progress);
         /// </code></example>
         public static IVhrSaves Saves { get; private set; }
+
+        /// <summary>
+        /// Связь с серверами и очередь отложенных операций (SDK 1.12.0+): <see cref="IVhrConnection.IsOnline"/>
+        /// и <see cref="IVhrConnection.OnlineChanged"/> — для значка «нет связи»;
+        /// <see cref="IVhrConnection.PendingCount"/> — сколько рекордов, достижений, турнирных результатов
+        /// и завершений сессий ждут отправки (без связи они не теряются: лежат в файле и уходят сами);
+        /// <see cref="IVhrConnection.FlushAsync"/>, <see cref="IVhrConnection.OnDropped"/>. Тот же экземпляр,
+        /// что внедряет <see cref="VhrSdkLifetimeScope"/>. Null until initialized.
+        /// </summary>
+        /// <example><code>
+        /// VhrSdk.Connection.OnlineChanged += online => offlineIcon.SetActive(!online);
+        /// </code></example>
+        public static IVhrConnection Connection { get; private set; }
 
         /// <summary>Session / connection-state holder. Null until initialized.</summary>
         public static IVhrSession Session => _session;
@@ -184,11 +206,16 @@ namespace VhrGames.Sdk
             // готов до первого 401. Вне WebGL — безопасный no-op.
             VhrWebGlTokenChannel.EnsureInitialized();
 
+            // Очередь отложенных операций — до сервисов: читает файл с прошлых запусков и начинает
+            // отправку, как только будут связь и токен игрока. Общий экземпляр (тот же, что в DI).
+            Connection = VhrOutbox.GetOrCreate(api, options, log);
+
             Economy = new VhrEconomyService(api, options, log);
-            Leaderboard = new VhrLeaderboardService(api, options, log);
+            // Профиль — до лидерборда: GetTopAsync резолвит ники через него (один экземпляр).
+            Profile = new VhrProfileService(api, options, log);
+            Leaderboard = new VhrLeaderboardService(api, options, log, Profile);
             Servers = new VhrServersService(api, options);
             Tournaments = new VhrTournamentsService(api, options);
-            Profile = new VhrProfileService(api, options, log);
             Friends = new VhrFriendsService(api, options, log);
             PlayerStats = new VhrPlayerStatsService(api, options, log);
             Achievements = new VhrAchievementsService(api, options, log);
@@ -284,6 +311,8 @@ namespace VhrGames.Sdk
             Ads = null;
             VhrSavesService.ResetShared();
             Saves = null;
+            VhrOutbox.ResetShared();
+            Connection = null;
             _initTask = null;
             IsInitialized = false;
         }

@@ -43,7 +43,7 @@ namespace VhrGames.Installer
     public static class VhrSdkInstaller
     {
         /// <summary>Версия установщика (= версия SDK, вместе с которой он выпущен).</summary>
-        public const string InstallerVersion = "1.11.0";
+        public const string InstallerVersion = "1.12.0";
 
         private const string MenuPath = "VHR/Установить SDK";
         private const string VersionsUrl = "https://api.vhrweb.ru/games/api/Sdk/versions";
@@ -51,7 +51,7 @@ namespace VhrGames.Installer
         private const string Title = "VHR — установка SDK";
 
         // ---- Фолбэк, если сервер VHR недоступен (офлайн или эндпоинт ещё не развёрнут) ----
-        private const string FallbackLatest = "1.11.0";
+        private const string FallbackLatest = "1.12.0";
         private const string FallbackGitUrl = "https://github.com/Merchelago/unity-sdk.git";
 
         private static readonly string[][] FallbackDependencies =

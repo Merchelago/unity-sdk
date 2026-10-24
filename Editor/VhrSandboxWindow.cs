@@ -370,7 +370,8 @@ namespace VhrGames.Sdk.Editor
             Add("Прогресс: PlayerStats", games + "PlayerStats");
             Add("Достижения игры", games + "Achievements/games/" + gid);
             Add("Мои достижения", games + "Achievements/me");
-            Add("Лидерборд игры", games + "Leaderboard/games/" + gid + "?limit=5");
+            Add("Таблицы лидеров игры", games + "Leaderboard/games/" + gid + "/boards");
+            Add("Лидерборд: основная таблица", games + "Leaderboard/games/" + gid + "?limit=5");
             Add("Друзья", games + "Friends");
             Add("Турниры", games + "Tournaments?status=active");
             Add("Серверы: привязки", api + "/servers/api/bindings?gameId=" + gid);

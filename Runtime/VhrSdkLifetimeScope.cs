@@ -97,10 +97,15 @@ namespace VhrGames.Sdk
 
             builder.Register<VhrSession>(Lifetime.Singleton).As<IVhrSession>().AsSelf();
             builder.Register<IVhrEconomy, VhrEconomyService>(Lifetime.Singleton);
-            builder.Register<IVhrLeaderboard, VhrLeaderboardService>(Lifetime.Singleton);
+            builder.Register<IVhrProfile, VhrProfileService>(Lifetime.Singleton);
+            // Лидерборд резолвит ники через IVhrProfile (тот же синглтон) — фабрикой, чтобы
+            // VContainer не выбирал между двумя конструкторами VhrLeaderboardService.
+            builder.Register<IVhrLeaderboard>(
+                r => new VhrLeaderboardService(
+                    r.Resolve<VhrApiClient>(), r.Resolve<VhrSdkOptions>(), r.Resolve<IVhrLog>(), r.Resolve<IVhrProfile>()),
+                Lifetime.Singleton);
             builder.Register<IVhrServers, VhrServersService>(Lifetime.Singleton);
             builder.Register<IVhrTournaments, VhrTournamentsService>(Lifetime.Singleton);
-            builder.Register<IVhrProfile, VhrProfileService>(Lifetime.Singleton);
             builder.Register<IVhrFriends, VhrFriendsService>(Lifetime.Singleton);
             builder.Register<IVhrPlayerStats, VhrPlayerStatsService>(Lifetime.Singleton);
             builder.Register<IVhrAchievements, VhrAchievementsService>(Lifetime.Singleton);
@@ -114,6 +119,11 @@ namespace VhrGames.Sdk
             // очередь автосохранения и одни подписки на потерю фокуса / закрытие страницы.
             builder.Register<IVhrSaves>(
                 r => VhrSavesService.GetOrCreate(r.Resolve<VhrApiClient>(), r.Resolve<VhrSdkOptions>(), r.Resolve<IVhrLog>()),
+                Lifetime.Singleton);
+            // Связь и очередь отложенных операций (SDK 1.12.0+) — общий экземпляр (тот же, что
+            // VhrSdk.Connection и что используют сервисы): один файл очереди и одни подписки.
+            builder.Register<IVhrConnection>(
+                r => VhrOutbox.GetOrCreate(r.Resolve<VhrApiClient>(), r.Resolve<VhrSdkOptions>(), r.Resolve<IVhrLog>()),
                 Lifetime.Singleton);
 
             builder.RegisterEntryPoint<VhrSdkEntryPoint>();

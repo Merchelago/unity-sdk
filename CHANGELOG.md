@@ -3,6 +3,95 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/). Как выпускаются версии — [RELEASING.md](RELEASING.md).
 
+## [1.12.0] - 2026-10-25
+
+### Добавлено — несколько таблиц лидеров на игру (`VhrSdk.Leaderboard`)
+- **Таблицы по режимам, code-first:** `SubmitAsync(board, score)` пишет счёт в таблицу с id `board`
+  (`a-z0-9_-`, до 32 символов, регистр не важен); нет такой таблицы — сервер создаёт её сам при первой
+  отправке, заводить в кабинете не нужно. `SubmitAsync(score)` — основная таблица `"default"`. До 50 таблиц
+  на игру. Счёт — `long` в пределах ±(2^53−1), сервер хранит лучший результат игрока за всё время, день,
+  неделю и месяц.
+- **`VhrBoardOptions { Title, Sort, Format }`** — `SubmitAsync(board, score, options)`: название,
+  направление (`VhrBoardSort.HigherIsBetter` / `LowerIsBetter` — «меньше — лучше» для времени и ходов) и
+  формат (`VhrScoreFormat.Number` / `Time` — миллисекунды). Применяются только при создании таблицы, дальше
+  ими управляет кабинет разработчика (игра → «Таблицы лидеров»).
+- **`VhrScoreResult { accepted, improved, best, rank, board }`** — новый ли это рекорд, лучший результат и
+  место игрока за всё время.
+- **`GetTopAsync(board, period, limit)` → `VhrBoardPage`**: топ за `AllTime`/`Daily`/`Weekly`/`Monthly` (до 100
+  строк), место и результат текущего игрока `me` (даже вне топа; `null` — результата нет) и `total`. Строки
+  `VhrBoardEntry { rank, userId, name, score, formatted, isCurrentUser }`: ники SDK получает сам одним
+  запросом через `IVhrProfile.ResolveNamesAsync` (скрытый профиль или ошибка резолва — «Игрок», страница не
+  падает), счёт уже отформатирован по таблице. Таблицы ещё нет — пустая страница, а не ошибка.
+- **`GetBoardsAsync()` → `VhrBoardInfo[]`** — таблицы игры в порядке вкладок: `id`, `title`, `sort`,
+  `format`, `suffix`, `isPrimary`, `hidden`.
+- **`VhrScoreFormatter`** — счёт как на сайте: «12 345 очков», «1:02.345», «1:02:03.004»
+  (`Format`, `FormatNumber`, `FormatTime`; `VhrBoardInfo.FormatScore`).
+- Окно «VHR → Тестирование в Editor» → «Проверить все API»: строка «Таблицы лидеров игры»
+  (`GET Leaderboard/games/{id}/boards`). В Live-песочнице таблицы, созданные тестовым игроком, сразу видны в
+  кабинете; его результаты в публичных таблицах скрыты.
+
+### Добавлено — данные игрока не теряются при обрыве связи (`VhrSdk.Connection`)
+- **Надёжная очередь отложенных операций.** Рекорды, достижения, турнирный счёт и завершение игровой
+  сессии при временной ошибке (нет сети, таймаут, 5xx, 408, 429, истёкший токен) больше не бросают
+  исключение, а встают в очередь в файле `persistentDataPath/vhr-sdk/outbox-{gameId}.json` (на WebGL —
+  IndexedDB): она переживает закрытие вкладки и перезапуск игры. Отправка — при старте SDK (как только есть
+  токен игрока), сразу после постановки, после любого успешного запроса, по событиям `online` и возврату во
+  вкладку, по таймеру с паузой 2 → 4 → … → 60 с (+ джиттер); `429` — через `Retry-After`, `401` — после
+  свежего токена. Только операции текущего игрока (`sub` токена); схлопывание (ачивка — одна, рекорд —
+  лучший и худший по таблице, турнир — максимум); до 300 операций, TTL 14 дней. Окончательный отказ
+  сервера (прочие 4xx) — выброс с событием `OnDropped` и предупреждением. Запись файла атомарная
+  (`*.tmp` + замена), битый файл — пустая очередь и копия `.bad`.
+- **`IVhrConnection`** (`VhrSdk.Connection`, внедрение через `VhrSdkLifetimeScope`; один общий экземпляр):
+  `IsOnline` + `OnlineChanged` (последний запрос SDK получил ответ / браузер не офлайн), `PendingCount` +
+  `PendingChanged`, `FlushAsync()` (до 30 с), `OnDropped(VhrDroppedOperation)` (`Kind`, `Target`, `Value`,
+  `Reason`, `HttpStatus`, `Message`, `QueuedAtUtc`).
+- **`Achievements.UnlockAsync(slug)` → `VhrUnlockResult { unlocked, queued, code, achievement }`** — SDK
+  наконец выдаёт ачивки сам (`POST /api/Achievements/unlock`, код `game.{gameId}.{slug}` строится как на
+  сервере; принимает и полный код, например из `VhrCatalogIds`). Подтверждённые коды запоминаются на запуск.
+- **`Tournaments.SubmitAsync(id, score)` → `VhrTournamentScoreResult { accepted, queued, bestScore,
+  tournamentId }`**; старый `SubmitScoreAsync` (возвращает `long`) работает через него.
+- **`VhrScoreResult.queued`** — счёт в очереди (`accepted = false`; `improved`/`best`/`rank` неизвестны).
+- **Сохранения «сначала локально».** `QueueSave`/`SaveAsync` сразу кладут данные слота на устройство
+  (`vhr-sdk/saves/{gameId}/{userId}/slot_{slot}.pending.json`; на диск — не чаще раза в секунду на слот и
+  синхронно при скрытии страницы, потере фокуса, выходе), после подтверждения сервером файл удаляется, а
+  локальная копия облачной версии (`slot_{slot}.cache.json`) обновляется. При старте неотправленное текущего
+  игрока поднимается и догружается циклом автосохранения. `LoadAsync`: есть неотправленное —
+  `VhrSaveLoadResult.FromPending`, нет связи — `FromCache` (новые свойства). `409` после обрыва связи с
+  нашими же данными на сервере (запрос дошёл, ответ потерялся) считается успехом. Гость и Editor Simulation
+  локальных файлов не пишут.
+- **WebGL:** новый `VhrStorageBridge.jslib` — `FS.syncfs` после записей (одна синхронизация на серию через
+  ~1 с) и сразу при скрытии/закрытии страницы; `VhrLifecycleBridge.jslib` сообщает ещё о возврате во
+  вкладку и `online`/`offline` браузера.
+
+### Изменено
+- `VhrLeaderboardService` получает `IVhrProfile` (новый конструктор `(api, options, log, profile)`; прежний
+  `(api, options, log)` сохранён и создаёт свой профиль). `VhrSdk` создаёт `Profile` до `Leaderboard`,
+  `VhrSdkLifetimeScope` регистрирует лидерборд фабрикой с общим `IVhrProfile`.
+- `SubmitScoreAsync(gameId, score)` шлёт тот же `POST /api/Leaderboard/score` с `board: "default"`.
+- Временные ошибки сети/сервера в `Leaderboard.SubmitAsync`/`SubmitScoreAsync`, `Tournaments.SubmitScoreAsync`
+  и `GameSessions.EndAsync` больше не исключение — операция в очереди (окончательные 4xx и отмена `ct` — как
+  раньше). `Tournaments.SubmitScoreAsync` в этом случае возвращает присланный счёт и теперь проверяет id
+  турнира (GUID) и счёт (0…10^12) до запроса (`bad_request`).
+- `Saves.LoadAsync` при неотправленных данных слота возвращает их (раньше — облачную версию, старее
+  автосохранения); `SaveAsync` при временной ошибке оставляет данные в очереди автосохранения; автосохранение
+  повторяет сразу при возвращении сети, во вкладку или фокуса.
+- `IVhrAchievements` (`UnlockAsync`) и `IVhrTournaments` (`SubmitAsync`) получили методы — собственные
+  реализации этих интерфейсов (моки) нужно дополнить.
+
+### Устарело
+- `IVhrLeaderboard.GetForGameAsync(gameId, limit)` → `GetTopAsync(board, period, limit)`.
+- `IVhrLeaderboard.SubmitScoreAsync(gameId, score)` → `SubmitAsync(score)` / `SubmitAsync(board, score)`.
+  Оба работают как прежде (основная таблица), помечены `[Obsolete]` и будут удалены не раньше 2.0.
+  `GetGlobalAsync` (общий рейтинг платформы) не изменился.
+
+### Документация
+- README: раздел «Таблицы лидеров» — несколько режимов, время «меньше — лучше», место игрока, ошибки,
+  миграция. `Documentation~/index.md`: справочник 6.2 (эндпоинты, разбор ответов, ники, формат), траблшутинг.
+- README: раздел «Работа без связи» — что гарантируется и что нет (покупки и экономика — только онлайн;
+  дневные/недельные таблицы считают отложенный счёт по времени доставки), пример индикатора
+  `VhrSdk.Connection.OnlineChanged`; выдача ачивок в «Каталоге игры». `Documentation~/index.md`: 6.9
+  (классификация ответов, формат файла очереди, WebGL и IndexedDB), «сначала локально» в 6.8, траблшутинг.
+
 ## [1.11.0] - 2026-10-25
 
 ### Добавлено — облачные сохранения (`VhrSdk.Saves`)
@@ -617,6 +706,7 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
+[1.12.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.12.0
 [1.11.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.11.0
 [1.10.1]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.10.1
 [1.6.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.6.0

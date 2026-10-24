@@ -26,13 +26,51 @@ namespace VhrGames.Sdk
         /// <summary>
         /// <c>POST /api/Tournaments/{id}/score</c> — отправить результат (сохраняется
         /// лучший). Возвращает лучший засчитанный счёт игрока в турнире.
+        /// SDK 1.12.0+: нет связи — исключения нет, результат встаёт в очередь (уйдёт сам) и
+        /// возвращается присланный счёт; отличить этот случай — <see cref="SubmitAsync"/>.
         /// </summary>
         Task<long> SubmitScoreAsync(string tournamentId, long score, CancellationToken ct = default);
+
+        /// <summary>
+        /// <c>POST /api/Tournaments/{id}/score</c> (SDK 1.12.0+) — отправить результат (засчитывается
+        /// лучший, больше — лучше; счёт 0…10^12) и узнать итог: <see cref="VhrTournamentScoreResult.bestScore"/>.
+        /// Нет связи (сеть, таймаут, 5xx, истёкший токен) — исключения нет:
+        /// <see cref="VhrTournamentScoreResult.queued"/> = <c>true</c>, результат в очереди на устройстве
+        /// (<see cref="IVhrConnection"/>) и уйдёт сам, когда связь вернётся. Сервер принимает результат,
+        /// только пока турнир активен: доставленный после окончания будет отклонён
+        /// (<see cref="IVhrConnection.OnDropped"/>).
+        /// Ошибки — <see cref="VhrSdkException"/>: неверный id турнира или счёт — <c>bad_request</c>
+        /// (до запроса); турнир закрыт / нет подписки / не та игра — ответ сервера.
+        /// </summary>
+        Task<VhrTournamentScoreResult> SubmitAsync(string tournamentId, long score, CancellationToken ct = default);
+    }
+
+    /// <summary>Итог <see cref="IVhrTournaments.SubmitAsync"/> (SDK 1.12.0+).</summary>
+    [Serializable]
+    public sealed class VhrTournamentScoreResult
+    {
+        /// <summary><c>true</c> — сервер принял результат; <c>false</c> вместе с <see cref="queued"/> — в очереди.</summary>
+        public bool accepted;
+
+        /// <summary>
+        /// <c>true</c> — связи с сервером не было: результат сохранён в очереди на устройстве и уйдёт
+        /// сам (<see cref="IVhrConnection"/>). <see cref="bestScore"/> пока неизвестен (0).
+        /// </summary>
+        public bool queued;
+
+        /// <summary>Лучший засчитанный счёт игрока в турнире (после этой отправки).</summary>
+        public long bestScore;
+
+        /// <summary>Id турнира (GUID в нижнем регистре).</summary>
+        public string tournamentId;
     }
 
     /// <summary>HTTP implementation of <see cref="IVhrTournaments"/>.</summary>
     public sealed class VhrTournamentsService : IVhrTournaments
     {
+        /// <summary>Потолок счёта турнира на сервере (анти-накрутка): 10^12.</summary>
+        public const long MaxScore = 1_000_000_000_000L;
+
         private readonly VhrApiClient _api;
         private readonly VhrSdkOptions _options;
 
@@ -75,10 +113,42 @@ namespace VhrGames.Sdk
         /// <inheritdoc />
         public async Task<long> SubmitScoreAsync(string tournamentId, long score, CancellationToken ct = default)
         {
-            var req = new ScoreRequest { score = score };
-            var res = await _api.SendAsync<ScoreResponse>(
-                "POST", Url($"{Uri.EscapeDataString(tournamentId)}/score"), req, ct: ct);
-            return res?.bestScore ?? score;
+            var r = await SubmitAsync(tournamentId, score, ct);
+            return r.queued ? score : r.bestScore;
+        }
+
+        /// <inheritdoc />
+        public async Task<VhrTournamentScoreResult> SubmitAsync(string tournamentId, long score, CancellationToken ct = default)
+        {
+            if (!Guid.TryParse((tournamentId ?? string.Empty).Trim(), out var tid))
+                throw new VhrSdkException("bad_request", $"Неверный id турнира '{tournamentId}': нужен GUID из ListAsync.",
+                    0, "bad_request", null);
+            if (score < 0 || score > MaxScore)
+                throw new VhrSdkException("bad_request", $"Счёт турнира {score} вне диапазона 0…{MaxScore}.",
+                    0, "bad_request", null);
+
+            var id = tid.ToString("D");
+            string Body(long value) => UnityEngine.JsonUtility.ToJson(new ScoreRequest { score = value });
+            var sent = await VhrOutbox.GetOrCreate(_api, _options, null)
+                .SendOrQueueAsync(VhrOutboxKinds.TournamentScore, id, score, Body, false, ct);
+            if (sent.Queued)
+                return new VhrTournamentScoreResult { accepted = false, queued = true, tournamentId = id };
+
+            long best = score; // 200 без тела — засчитан присланный (как раньше)
+            if (!string.IsNullOrWhiteSpace(sent.Body))
+            {
+                try
+                {
+                    var res = UnityEngine.JsonUtility.FromJson<ScoreResponse>(sent.Body);
+                    if (res != null) best = res.bestScore;
+                }
+                catch (Exception ex)
+                {
+                    throw new VhrSdkException("deserialize_error",
+                        $"Could not parse response from {Url(id + "/score")}: {ex.Message}. Body={sent.Body}", 0, ex);
+                }
+            }
+            return new VhrTournamentScoreResult { accepted = true, bestScore = best, tournamentId = id };
         }
 
         // JsonUtility не парсит JSON-массив верхнего уровня — оборачиваем тело

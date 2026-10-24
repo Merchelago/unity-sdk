@@ -6,11 +6,12 @@ namespace VhrGames.Sdk
 {
     /// <summary>
     /// Достижения (achievements) — чтение каталога платформенных и игровых ачивок,
-    /// а также разблокировок игрока. Backed by
+    /// разблокировок игрока и (SDK 1.12.0+) выдача ачивки своей игры
+    /// (<see cref="UnlockAsync"/>). Backed by
     /// <c>{GamesBaseUrl}/api/Achievements/*</c> (UnityGamesMS, AchievementsController).
     /// <para>
-    /// Reads only. Разблокировка ачивки (<c>POST /unlock</c>) выполняется хостом
-    /// (iframe страницы игры) с JWT игрока и в этот клиент намеренно не вынесена.
+    /// Выдавать можно только ачивки своей игры (игровой токен с <c>gid</c> этой игры), заведённые в
+    /// кабинете разработчика (игра → Достижения); платформенные выдаёт только сервер.
     /// </para>
     /// </summary>
     /// <remarks>
@@ -68,6 +69,50 @@ namespace VhrGames.Sdk
         /// (из <c>gid</c> токена или <see cref="VhrSdkOptions.GameId"/>).
         /// </summary>
         Task<VhrUserAchievement[]> GetMineForCurrentGameAsync(CancellationToken ct = default);
+
+        /// <summary>
+        /// <c>POST /api/Achievements/unlock</c> (SDK 1.12.0+) — выдать игроку ачивку текущей игры.
+        /// <paramref name="slug"/> — короткий код из кабинета (<c>"first_win"</c>; регистр не важен,
+        /// пробелы → <c>_</c>, как на сервере) или полный код <c>game.{gameId}.{slug}</c>; SDK сам
+        /// подставит <c>game.{gameId}.</c> (id игры — из <c>gid</c> токена или
+        /// <see cref="VhrSdkOptions.GameId"/>).
+        /// <para>
+        /// Итог: <see cref="VhrUnlockResult.unlocked"/> = <c>true</c> — открыта сейчас впервые
+        /// (покажите тост); <c>false</c> — уже была открыта. Повторные вызовы дёшевы: в пределах
+        /// запуска SDK запоминает подтверждённые ачивки и не ходит на сервер. Нет связи (сеть, таймаут,
+        /// 5xx, истёкший токен) — исключения нет: <see cref="VhrUnlockResult.queued"/> = <c>true</c>,
+        /// ачивка в очереди на устройстве (<see cref="IVhrConnection"/>) и откроется, когда связь
+        /// вернётся (в том числе после перезапуска игры).
+        /// </para>
+        /// Ошибки — <see cref="VhrSdkException"/>: гость (нет токена) — <c>unauthorized</c>; ачивки
+        /// нет — <c>not_found</c>; платформенная — <c>ServerCode = platform_achievement</c>; чужая
+        /// игра — <c>game_mismatch</c>; пустой код — <c>bad_request</c> (до запроса).
+        /// </summary>
+        /// <example><code>
+        /// var r = await VhrSdk.Achievements.UnlockAsync("first_win");
+        /// if (r.unlocked) ShowToast(r.achievement.title);
+        /// </code></example>
+        Task<VhrUnlockResult> UnlockAsync(string slug, CancellationToken ct = default);
+    }
+
+    /// <summary>Итог <see cref="IVhrAchievements.UnlockAsync"/> (SDK 1.12.0+).</summary>
+    [Serializable]
+    public sealed class VhrUnlockResult
+    {
+        /// <summary><c>true</c> — ачивка открыта сейчас впервые; <c>false</c> — уже была открыта или запрос в очереди.</summary>
+        public bool unlocked;
+
+        /// <summary>
+        /// <c>true</c> — связи с сервером не было: запрос сохранён в очереди на устройстве и уйдёт сам,
+        /// когда связь вернётся (<see cref="IVhrConnection"/>). <see cref="unlocked"/> пока <c>false</c>.
+        /// </summary>
+        public bool queued;
+
+        /// <summary>Полный код ачивки: <c>game.{gameId}.{slug}</c>.</summary>
+        public string code;
+
+        /// <summary>Ачивка из ответа сервера (название, иконка, очки); <c>null</c>, если запрос в очереди или уже был подтверждён в этом запуске.</summary>
+        public VhrAchievement achievement;
     }
 
     /// <summary>HTTP-реализация <see cref="IVhrAchievements"/>.</summary>
@@ -163,6 +208,60 @@ namespace VhrGames.Sdk
             return gid;
         }
 
+        // ---- выдача ачивки (SDK 1.12.0+) ----
+
+        // Ачивки, которые сервер уже подтвердил в этом запуске («{userId}|{код}»): повторный
+        // UnlockAsync (хоть каждый кадр) не ходит на сервер.
+        private readonly System.Collections.Generic.HashSet<string> _confirmed =
+            new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+
+        /// <inheritdoc />
+        public async Task<VhrUnlockResult> UnlockAsync(string slug, CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+            var code = BuildCode(CurrentGameIdOrThrow(), slug);
+            var confirmKey = _options.ResolveCurrentUserId() + "|" + code;
+            if (_confirmed.Contains(confirmKey))
+                return new VhrUnlockResult { unlocked = false, code = code };
+
+            var body = UnityEngine.JsonUtility.ToJson(new UnlockBody { code = code });
+            var sent = await VhrOutbox.GetOrCreate(_api, _options, _log)
+                .SendOrQueueAsync(VhrOutboxKinds.AchievementUnlock, code, 0, _ => body, false, ct);
+            if (sent.Queued)
+                return new VhrUnlockResult { queued = true, code = code };
+
+            UnlockResponse dto = null;
+            if (!string.IsNullOrWhiteSpace(sent.Body))
+            {
+                try { dto = UnityEngine.JsonUtility.FromJson<UnlockResponse>(sent.Body); }
+                catch (Exception e) { _log?.Warn($"[VHR Achievements] не удалось разобрать ответ на выдачу ачивки: {e.Message}"); }
+            }
+            _confirmed.Add(confirmKey);
+
+            // JsonUtility не оставляет вложенный объект null — пустой объект без id считаем «нет».
+            var ach = dto?.achievement;
+            if (ach != null && string.IsNullOrEmpty(ach.id) && string.IsNullOrEmpty(ach.code)) ach = null;
+            return new VhrUnlockResult { unlocked = dto != null && dto.unlocked, code = code, achievement = ach };
+        }
+
+        /// <summary>
+        /// Полный код ачивки как на сервере (<c>GameAchievementRules.BuildCode</c>): полный код своей
+        /// игры (<c>game.…</c>) — как есть; иначе <c>game.{gameId}.{slug}</c>, где gameId — GUID в
+        /// нижнем регистре, slug — в нижнем регистре с <c>_</c> вместо пробелов.
+        /// </summary>
+        internal static string BuildCode(string gameId, string slug)
+        {
+            var raw = (slug ?? string.Empty).Trim();
+            if (raw.Length == 0)
+                throw new VhrSdkException("bad_request",
+                    "Пустой код достижения: передайте код из кабинета разработчика (напр. \"first_win\").",
+                    0, "bad_request", null);
+            if (raw.StartsWith("game.", StringComparison.OrdinalIgnoreCase)) return raw;
+
+            var gid = Guid.TryParse(gameId, out var g) ? g.ToString("D") : (gameId ?? string.Empty).Trim().ToLowerInvariant();
+            return "game." + gid + "." + raw.ToLowerInvariant().Replace(' ', '_');
+        }
+
         // ---- общие хелперы разбора массива верхнего уровня ----
 
         // Эндпоинт отдаёт [ {...}, ... ] на верхнем уровне; JsonUtility так не
@@ -194,6 +293,12 @@ namespace VhrGames.Sdk
         [Serializable] private sealed class AchievementList { public VhrAchievement[] items; }
         [Serializable] private sealed class UserAchievementList { public VhrUserAchievement[] items; }
         [Serializable] private sealed class MyGamesEnvelope { public VhrGameAchievements[] items; }
+
+        // POST /api/Achievements/unlock: тело { code }, ответ { unlocked, achievement }.
+        [Serializable] private sealed class UnlockBody { public string code; }
+#pragma warning disable CS0649 // поля заполняет JsonUtility
+        [Serializable] private sealed class UnlockResponse { public bool unlocked; public VhrAchievement achievement; }
+#pragma warning restore CS0649
     }
 
     /// <summary>

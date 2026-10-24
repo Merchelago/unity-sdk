@@ -337,6 +337,32 @@ namespace VhrGames.Sdk
             return string.IsNullOrWhiteSpace(GameId) ? GameId : GameId.Trim();
         }
 
+        // Кэш разбора токена для ResolveCurrentUserId: токен меняется раз в десятки минут,
+        // а спрашивают часто (автосохранение, очередь отложенных операций).
+        [NonSerialized] private string _userIdToken;
+        [NonSerialized] private string _userId = string.Empty;
+
+        /// <summary>
+        /// Текущий игрок для локальных файлов SDK (очередь отложенных операций, неотправленные
+        /// сохранения, SDK 1.12.0+): claim <c>sub</c> токена (игровой токен платформы, песочный ключ
+        /// <c>sbx_*</c> в Editor). Пусто — гость, нет токена или токен не JWT. Подпись не
+        /// проверяется: это лишь «чьи это файлы», доступ решает сервер.
+        /// </summary>
+        internal string ResolveCurrentUserId()
+        {
+            string token;
+            try { token = TokenProvider?.Invoke(); }
+            catch { return string.Empty; }
+            if (string.IsNullOrEmpty(token)) return string.Empty;
+            if (string.Equals(token, _userIdToken, StringComparison.Ordinal)) return _userId;
+
+            _userIdToken = token;
+            _userId = VhrJwt.TryDecode(token, out var info) && !string.IsNullOrWhiteSpace(info.Subject)
+                ? info.Subject.Trim()
+                : string.Empty;
+            return _userId;
+        }
+
         private static string SafeAbsoluteUrl()
         {
             try { return Application.absoluteURL; }

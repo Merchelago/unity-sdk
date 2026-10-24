@@ -33,6 +33,11 @@ namespace VhrGames.Sdk
         /// Сервер читает <paramref name="outcome"/> (исход матча);
         /// <paramref name="score"/> и <paramref name="durationSeconds"/> отправляются
         /// в теле для будущей телеметрии.
+        /// <para>
+        /// SDK 1.12.0+: нет связи (сеть, таймаут, 5xx, истёкший токен) — исключения нет, завершение
+        /// встаёт в очередь на устройстве (<see cref="IVhrConnection"/>) и уйдёт само, когда связь
+        /// вернётся. <see cref="HeartbeatAsync"/> в очередь не ставится.
+        /// </para>
         /// </summary>
         /// <param name="sessionId">Id сессии из <see cref="StartAsync"/>.</param>
         /// <param name="outcome">Необязательный исход (напр. <c>"win"</c>, <c>"lose"</c>, <c>"quit"</c>).</param>
@@ -93,14 +98,17 @@ namespace VhrGames.Sdk
             if (string.IsNullOrWhiteSpace(sessionId))
                 throw new ArgumentException("sessionId is required.", nameof(sessionId));
 
-            var req = new EndSessionBody
+            var body = UnityEngine.JsonUtility.ToJson(new EndSessionBody
             {
                 outcome = outcome,
                 score = score,
                 durationSeconds = durationSeconds
-            };
-            await _api.SendAsync<VhrSessionEndResult>(
-                "POST", Url($"{sessionId}/end"), req, ct: ct);
+            });
+            // Сессии бывают анонимными (гость) — завершение ставится в очередь и без игрока.
+            var sent = await VhrOutbox.GetOrCreate(_api, _options, _log)
+                .SendOrQueueAsync(VhrOutboxKinds.SessionEnd, sessionId.Trim(), 0, _ => body, true, ct);
+            if (sent.Queued)
+                _log?.Verbose($"GameSessions: сервер недоступен — завершение сессии {sessionId.Trim()} в очереди.");
         }
 
         /// <inheritdoc />

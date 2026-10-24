@@ -112,6 +112,11 @@ namespace VhrGames.Sdk
                 }
             }
 
+            // Состояние связи для VhrSdk.Connection.IsOnline (SDK 1.12.0+): дошёл ли запрос до
+            // сервисов VHR. Отмена вызывающим (ct) о связи ничего не говорит — её не учитываем.
+            if (!(resp.StatusCode == 0 && ct.IsCancellationRequested))
+                VhrConnectivity.ReportResponse(resp.StatusCode, resp.IsSuccess ? null : TryReadServerCode(resp.Body));
+
             if (allowNotImplemented && resp.StatusCode == 501)
                 return null;
 
@@ -344,7 +349,8 @@ namespace VhrGames.Sdk
     /// <summary>
     /// Тело запроса, уже сериализованное в JSON: <see cref="VhrApiClient"/> отправит
     /// его как есть, без <see cref="JsonUtility"/> (тот не умеет <c>null</c> у
-    /// <c>long?</c> и строки-JSON внутри JSON). Используют облачные сохранения.
+    /// <c>long?</c> и строки-JSON внутри JSON). Используют облачные сохранения и очередь отложенных
+    /// операций (SDK 1.12.0+: тело хранится в файле очереди и отправляется как есть).
     /// </summary>
     internal sealed class VhrRawJson
     {
