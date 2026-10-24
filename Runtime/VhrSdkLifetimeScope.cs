@@ -48,6 +48,11 @@ namespace VhrGames.Sdk
                  "Выключите, если у игры своя пауза (тогда слушайте IVhrAds.OnAdOpened/OnAdClosed).")]
         [SerializeField] private bool adsAutoPause;
 
+        [Tooltip("Облачные сохранения: автосохранение (IVhrSaves.QueueSave) отправляет слот не чаще раза " +
+                 "в столько секунд реального времени. По умолчанию 10, минимум 5 (лимит сервера — 12 записей в минуту).")]
+        [Min(5f)]
+        [SerializeField] private float savesMinIntervalSeconds = 10f;
+
         [Tooltip("Режим SDK в Unity Editor. Auto — как выбрано в окне VHR → Тестирование в Editor " +
                  "(Live, если там включён Live и сохранён песочный ключ, иначе Simulation). " +
                  "В сборках не используется. Песочный ключ здесь НЕ хранится — только в EditorPrefs.")]
@@ -74,6 +79,7 @@ namespace VhrGames.Sdk
             PingOnInitialize = pingOnInitialize,
             VerboseLogging = verboseLogging,
             AdsAutoPause = adsAutoPause,
+            SavesMinIntervalSeconds = savesMinIntervalSeconds,
             EditorMode = editorMode
             // TokenProvider не задаём: дефолт (WebGL access_token) подставит Validate().
         };
@@ -103,6 +109,11 @@ namespace VhrGames.Sdk
             // подписки на OnAdOpened/OnAdClosed работали при любом способе доступа.
             builder.Register<IVhrAds>(
                 r => VhrAdsService.GetOrCreate(r.Resolve<VhrSdkOptions>(), r.Resolve<IVhrLog>()),
+                Lifetime.Singleton);
+            // Облачные сохранения — тоже общий экземпляр (тот же, что VhrSdk.Saves): одна
+            // очередь автосохранения и одни подписки на потерю фокуса / закрытие страницы.
+            builder.Register<IVhrSaves>(
+                r => VhrSavesService.GetOrCreate(r.Resolve<VhrApiClient>(), r.Resolve<VhrSdkOptions>(), r.Resolve<IVhrLog>()),
                 Lifetime.Singleton);
 
             builder.RegisterEntryPoint<VhrSdkEntryPoint>();

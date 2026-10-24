@@ -3,6 +3,41 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/). Как выпускаются версии — [RELEASING.md](RELEASING.md).
 
+## [1.11.0] - 2026-10-25
+
+### Добавлено — облачные сохранения (`VhrSdk.Saves`)
+- **`IVhrSaves`** (`VhrSdk.Saves`, внедрение через `VhrSdkLifetimeScope`; один общий экземпляр):
+  прогресс игрока на сервере VHR (`{BridgeBaseUrl}/api/saves`, игровой токен) — переживает очистку
+  браузера, переносится между устройствами. `LoadAsync` / `LoadJsonAsync<T>`, `SaveAsync` /
+  `SaveJsonAsync<T>` с `expectedVersion` (`null` — перезаписать, `0` — только создать, `N` — только
+  поверх версии `N`), `DeleteAsync`, `ListAsync`. Итоги — `VhrSaveLoadResult` / `VhrSaveWriteResult`,
+  причины — `VhrSaveError` (`NotFound`, `Conflict`, `QuotaExceeded`, `SlotTooLarge`, `SlotsLimit`,
+  `RateLimited`, `NotAuthenticated`, `Disabled`, `Network`, `BadSlot`, `Unknown`).
+- **Автосохранение** `QueueSave` / `QueueSaveJson<T>` + `FlushAsync`: последнее состояние слота уходит
+  в фоне не чаще раза в `VhrSdkOptions.SavesMinIntervalSeconds` (по умолчанию 10 с, минимум 5; поле
+  есть и в инспекторе `VhrSdkLifetimeScope`), все автосохранения — не больше 10 записей в минуту
+  (лимит сервера — 12). Отправка сразу при потере фокуса, скрытии/закрытии вкладки (новый
+  `VhrLifecycleBridge.jslib`: `visibilitychange`, `pagehide`) и выходе; после `429` — повтор через
+  `Retry-After`, при обрыве связи — с паузой до 60 с. Запись идёт с проверкой версии загруженного
+  слота: чужая запись с другого устройства/вкладки → событие `OnConflict(slot, serverVersion)`, облако
+  вслепую не перезаписывается. Итог каждой отправки — `OnAutoSaveResult`.
+- Лимиты платформы: слот ≤ 256 КБ после сжатия и ≤ 1 МБ до сжатия, ≤ 10 слотов, 12 записей и 60 чтений
+  в минуту; квота игры — 50 МБ бесплатно, сверх — пакеты, которые оплачивает разработчик в кабинете.
+- **Unity Editor:** в режиме Simulation — локальное хранилище `Library/VhrSdk/SimSaves` с теми же
+  лимитами, версиями и конфликтами; в Live — настоящий сервер с песочным ключом. Окно
+  «VHR → Тестирование в Editor»: «Проверить все API» прогоняет цикл сохранений (запись → чтение →
+  версия → конфликт `409` → удаление → `404`) на тестовом слоте `vhr_sdk_selftest`; блок с объёмом
+  и очисткой локальных сохранений Simulation.
+
+### Добавлено — транспорт
+- `VhrHttpResponse.RetryAfter` (заголовок `Retry-After` ответов с ошибкой, `UnityWebRequestHttp`
+  его заполняет) и `VhrSdkException.RetryAfterSeconds`. Старый конструктор `VhrHttpResponse` сохранён —
+  свои реализации `IVhrHttp` компилируются без изменений.
+
+### Документация
+- README и `Documentation~/index.md`: раздел про облачные сохранения — API, пример загрузки при старте
+  и автосохранения, лимиты и платная квота, ошибки, рекомендации, траблшутинг.
+
 ## [1.10.1] - 2026-10-23
 
 ### Исправлено — WebGL: зависания и таймауты
@@ -582,6 +617,7 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
+[1.11.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.11.0
 [1.10.1]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.10.1
 [1.6.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.6.0
 [1.5.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.5.0

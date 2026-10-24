@@ -261,8 +261,8 @@ public static class VhrCatalogIds
 
 | Режим | Экономика | Остальные сервисы | Реклама |
 |---|---|---|---|
-| **Simulation** | Локально: баланс 10 000 (`SessionState`), диалог подтверждения, цены `SimulatedItemPrices` / `SimulatedDefaultItemPrice`, «инвентарь» сеанса | Как в 1.8 (HTTP с вашим `TokenProvider`) | Симуляция |
-| **LiveSandbox** | Настоящий мост: намерение → диалог → `purchase-intents/{id}/confirm` | Настоящий сервер: Achievements, Friends, GameSessions, Leaderboard, PlayerStats, Profile (`/api/Auth/me` → «Тестовый игрок», `isSandbox`), Tournaments, Servers, Lobby/Relay | Симуляция (доход не репортится) |
+| **Simulation** | Локально: баланс 10 000 (`SessionState`), диалог подтверждения, цены `SimulatedItemPrices` / `SimulatedDefaultItemPrice`, «инвентарь» сеанса | Облачные сохранения — локально (`Library/VhrSdk/SimSaves`, лимиты сервера, см. [6.8](#68-ivhrsaves--облачные-сохранения-sdk-1110)); остальные — как в 1.8 (HTTP с вашим `TokenProvider`) | Симуляция |
+| **LiveSandbox** | Настоящий мост: намерение → диалог → `purchase-intents/{id}/confirm` | Настоящий сервер: Saves, Achievements, Friends, GameSessions, Leaderboard, PlayerStats, Profile (`/api/Auth/me` → «Тестовый игрок», `isSandbox`), Tournaments, Servers, Lobby/Relay | Симуляция (доход не репортится) |
 
 В LiveSandbox `Validate()` подставляет `TokenProvider = () => <песочный ключ>`
 (`Authorization: Bearer`) и `GameId = gid` ключа (подпись не проверяется — это делает
@@ -275,7 +275,10 @@ public static class VhrCatalogIds
 вставить → «Проверить» (`GET sandbox/me`: игра, тестовый игрок `sbx_*`, баланс, срок) →
 режим **Live** → Play → тест покупок, лидербордов, ачивок → **«Сбросить тестовые данные»**
 (`POST sandbox/reset`: баланс 10 000, покупки и инвентарь по игре очищены). Кнопка
-«Проверить все API» делает read-only GET ко всем сервисам и показывает коды ответов.
+«Проверить все API» делает read-only GET ко всем сервисам и показывает коды ответов, плюс
+цикл облачных сохранений на тестовом слоте `vhr_sdk_selftest`: `PUT` → `GET` (данные совпали) →
+`PUT` с `expectedVersion` (версия +1) → `PUT` с устаревшей версией (`409 version_conflict`) →
+`DELETE` → `GET` (`404 save_not_found`). Там же — объём локальных сохранений Simulation и их очистка.
 
 **Безопасность ключа.** Хранится только в `EditorPrefs` (имя уникально для проекта —
 хеш `Application.dataPath`), читается только под `#if UNITY_EDITOR` (код в сборку не
@@ -309,6 +312,7 @@ ProjectSettings, скриптах и предупреждает (в интера
 | `EditorMode` | `Auto` | Только Unity Editor: `Auto` (как в окне VHR) / `Simulation` / `LiveSandbox`. См. [3f](#3f-тестирование-в-unity-editor-simulation--live-песочница) |
 | `SimulatedDefaultItemPrice` | `100` | Цена товара за 1 шт. в режиме Simulation |
 | `SimulatedItemPrices` | `null` | `itemId → цена` для Simulation (и локальный «каталог» `GetItemsAsync`) |
+| `SavesMinIntervalSeconds` | `10` | Автосохранение `IVhrSaves.QueueSave`: слот уходит не чаще раза в N секунд реального времени. Меньше 5 нельзя — `Validate()` поднимет до 5 (`MinSavesIntervalSeconds`). В `VhrSdkLifetimeScope` — поле инспектора |
 | `IsEditorSimulation` / `IsEditorLiveSandbox` | — | Только чтение, после `Validate()`: итоговый режим в Editor (в сборках `false`) |
 
 `Validate()` бросает `VhrSdkException("config_invalid", …)` при отсутствии
@@ -393,7 +397,7 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
 
 ### 6.5 Статический фасад `VhrSdk`
 
-`InitializeAsync`, `IsInitialized`, `Economy`, `Ads`, `Leaderboard`, `Servers`,
+`InitializeAsync`, `IsInitialized`, `Economy`, `Ads`, `Saves`, `Leaderboard`, `Servers`,
 `Achievements`, `Profile`, `Friends`, `PlayerStats`, `GameSessions`, `Tournaments`,
 `Relay`, `Lobby`, `Session`, `ConnectionState`, `SdkVersion`, `ResetForTests()`.
 
@@ -404,7 +408,9 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
 маппит не-2xx в `VhrSdkException` (коды: `unauthorized`, `forbidden`,
 `not_found`, `conflict`, `sdk_update_required` (426), `rate_limited` (429),
 `not_implemented`, `connection_error`, `http_error`, `deserialize_error`); код из
-тела ответа моста (`{ "code": "..." }`) — в `ServerCode`, тело — в `ResponseBody`.
+тела ответа моста (`{ "code": "..." }`) — в `ServerCode`, тело — в `ResponseBody`, заголовок
+`Retry-After` (секунды или HTTP-дата) — в `RetryAfterSeconds` (SDK 1.11.0+; транспорт передаёт его
+в `VhrHttpResponse.RetryAfter` для ответов с ошибкой).
 
 ### 6.7 `IVhrAds` — реклама (SDK 1.8.0+)
 
@@ -435,6 +441,86 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
 > Награда за rewarded — **только внутриигровая**. Платформенные монеты за рекламу не
 > начисляются. `IVhrEconomy.ReportAdAsync` устарел (`[Obsolete]`): доход по нему больше не
 > засчитывается.
+
+### 6.8 `IVhrSaves` — облачные сохранения (SDK 1.11.0+)
+
+Доступ: `VhrSdk.Saves` или внедрение `IVhrSaves` (VContainer) — один общий экземпляр
+(`VhrSavesService.GetOrCreate`): одна очередь автосохранения и одни подписки на жизненный цикл.
+Мост принимает **только игровой токен** (обычный или песочный); игрок = `sub`, игра = `gid` токена,
+`X-Vhr-Game-Id` (если передан) обязан совпасть. Реальные игроки — только для активных игр, песочный —
+и для черновиков. JSON camelCase.
+
+| Член | HTTP (`{BridgeBaseUrl}`) | Ответ / результат |
+|---|---|---|
+| `LoadAsync(slot = "default")` | `GET /api/saves/{slot}` | 200 `{ slot, data, version, updatedAt }` → `VhrSaveLoadResult { Found, Data, Version, UpdatedAt }`; 404 `save_not_found` → `Found = false`, `Error = NotFound` |
+| `LoadJsonAsync<T>(slot, fallback)` | то же | `JsonUtility.FromJson<T>(data)`; нет сохранения / ошибка / не разобралось → `fallback` |
+| `SaveAsync(slot, data, expectedVersion)` | `PUT /api/saves/{slot}` `{ data, expectedVersion }` | 200 `{ slot, version, updatedAt, rawSize, storedSize }` → `VhrSaveWriteResult { Ok, Version, RawSize, StoredSize }` |
+| `SaveJsonAsync<T>(slot, value, expectedVersion)` | то же | `JsonUtility.ToJson(value)` |
+| `DeleteAsync(slot)` | `DELETE /api/saves/{slot}` | 204 → `true` (идемпотентно) |
+| `ListAsync()` | `GET /api/saves` | `{ slots: [ { slot, version, rawSize, updatedAt } ], limits: { maxSlotKb, maxSlots, maxRawKb } }` → `VhrSaveSlotInfo[]`, `Limits`; ошибка → `VhrSdkException` |
+| `QueueSave(slot, data)` / `QueueSaveJson<T>` | `PUT` в фоне | итог — `OnAutoSaveResult(slot, result)` |
+| `FlushAsync()` | `PUT` накопленного сразу | — |
+| `event Action<string, long> OnConflict` | — | автосохранение получило 409 |
+| `HasPendingSaves`, `Limits` | — | есть неотправленное; лимиты слота (дефолт 256 / 10 / 1024) |
+
+**Тело `PUT`** собирается вручную (не `JsonUtility`: тот не умеет `null` у `long?`):
+`{"data":"<строка>","expectedVersion":null|0|N}` в UTF-8; экранируются только `"`, `\` и управляющие
+символы — кириллица и прочий не-ASCII идут как есть (тело сервера ограничено 1.5 МБ при сыром лимите
+1 МБ). `expectedVersion`: `null` — last-write-wins; `0` — только создать (есть → 409); `N` — только если
+текущая версия `N`.
+
+**Слот:** `^[a-z0-9_.-]{1,64}$` кроме `.` и `..`; SDK обрезает пробелы и приводит к нижнему регистру,
+неверное имя отклоняет до запроса (`BadSlot`). Строку больше 1 МБ UTF-8 SDK тоже не отправляет
+(`SlotTooLarge`). Без токена запрос не уходит (`NotAuthenticated`).
+
+**Ошибки → `VhrSaveError`:**
+
+| Ответ моста | `Error` | Дополнительно |
+|---|---|---|
+| 404 `save_not_found` | `NotFound` | на `DELETE` считается успехом |
+| 409 `version_conflict` | `Conflict` | `ServerVersion` (0 — слота нет), `ServerUpdatedAt` |
+| 403 `storage_quota_exceeded` | `QuotaExceeded` | квота игры; уменьшающая запись проходит |
+| 413 `slot_too_large` | `SlotTooLarge` | `maxSlotKb` / `maxRawKb` из тела → `Limits` |
+| 403 `slots_limit` | `SlotsLimit` | `maxSlots` из тела → `Limits` |
+| 429 `rate_limited` | `RateLimited` | `RetryAfterSeconds`: заголовок `Retry-After` → поле `retryAfter` тела → 60 с |
+| 401, прочие 403 (`game_mismatch`, `game_token_forbidden`, …) | `NotAuthenticated` | |
+| 503 `saves_disabled`, 404 `game_not_found` | `Disabled` | |
+| 400 `bad_slot` / `bad_request` | `BadSlot` | |
+| нет связи / таймаут | `Network` | |
+| 5xx, 426, 404 без кода, нечитаемый ответ | `Unknown` | `ErrorCode` / `Message` |
+
+**Автосохранение (`QueueSave`):**
+- очередь хранит последнее значение слота; первое уходит сразу, дальше — не чаще раза в
+  `SavesMinIntervalSeconds` на слот (дефолт 10 с, минимум 5); все автосохранения вместе — не больше
+  10 записей за скользящую минуту (запас под явные `SaveAsync`/`DeleteAsync` до серверных 12);
+- операции одного слота (`Load`/`Save`/`Delete`/автосохранение) выполняются строго по очереди;
+- `expectedVersion` автосохранения: известная версия слота (после `LoadAsync`/успешной записи;
+  0 после `NotFound`/`DeleteAsync`); если загрузка слота не удалась — 0 (не перезаписывать облако
+  вслепую); слот в сессии не загружали — `null`;
+- 409 → слот в конфликте: данные придерживаются, `OnConflict(slot, serverVersion)`, запись слота на
+  паузе. Снимается `LoadAsync(slot)` (придержанное отбрасывается) или успешным `SaveAsync(slot, …)`;
+- 429 (на любой записи/удалении — лимит общий) → пауза `Retry-After` для всех автосохранений, данные в очереди;
+- нет связи / 5xx → повтор с паузой 5 → 10 → 20 → 40 → 60 с; `saves_disabled` → 60 с; нет токена → 30 с
+  (без запроса); `426 sdk_update_required`, `QuotaExceeded`, `SlotTooLarge`, `SlotsLimit`, `BadSlot` —
+  данные отбрасываются (повтор не поможет), следующий `QueueSave` пробует снова;
+- явный `SaveAsync`/`DeleteAsync` отменяет автосохранения слота, накопленные **до** вызова;
+- **flush сразу**: `Application.focusChanged(false)` (на телефоне приходит и перед паузой приложения),
+  `Application.quitting`, а на WebGL — `visibilitychange → hidden` и `pagehide`
+  (`VhrLifecycleBridge.jslib`; колбэк синхронно внутри DOM-события, чтобы запрос успел начаться).
+  Закрытие вкладки — «лучшее усилие»;
+- WebGL: ожидания — `VhrAsync` (кадры + `Time.realtimeSinceStartup`, пауза игры не мешает), TCS с
+  `RunContinuationsAsynchronously`, без `ConfigureAwait(false)`, `Task.Delay` и `CancelAfter`.
+
+**Лимиты и квота** (настройки платформы, дефолты): слот ≤ 256 КБ сжатого (`gzip` UTF-8) и ≤ 1 МБ сырого;
+≤ 10 слотов на игрока в игре; 12 записей/удалений и 60 чтений в минуту (игрок + игра); квота игры —
+50 МБ бесплатно по сжатому размеру, сверх — пакеты (1024 МБ за 199 монет на 30 дней), которые
+**оплачивает разработчик** в кабинете (игра → «Облачные сохранения», автопродление). Песочные сохранения
+(Editor Live) квоту игры не тратят: лимит 1024 КБ на тестового игрока в игре, удаляются, если не
+обновлялись 30 дней.
+
+**Editor Simulation:** `VhrEditorSaves` — файлы `Library/VhrSdk/SimSaves/slot_<slot>.json`, те же версии,
+`expectedVersion` и конфликты, gzip-размер, 256 КБ / 1 МБ, 10 слотов, 1024 КБ суммарно
+(`storage_quota_exceeded`), 12 записей и 60 чтений в минуту (`rate_limited` с паузой).
 
 ## 7. Модель идемпотентности
 
@@ -468,3 +554,8 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
 | Реклама всегда `Unavailable` на WebGL | Игра открыта не со страницы vhrgames.ru, реклама выключена платформой, детский аккаунт, адблок или нет объявления | Проверяйте на vhrgames.ru; это нормальный исход — продолжайте игру / прячьте кнопку |
 | Реклама часто `Cooldown` | Лимиты частоты платформы (interstitial ~ раз в 90 с, rewarded ~ 20/ч) или повторный вызов во время показа | Не вызывайте чаще; предложите rewarded позже |
 | Состояние подключения застряло в `Faulted` | Мост недоступен на init | Не фатально; вызовы ретраятся по требованию. Проверьте сеть/URL |
+| Сохранения → `NotAuthenticated` | Игрок не вошёл на vhrgames.ru (гость), игра открыта не со страницы VHR, в Editor нет песочного ключа | Ожидаемо для гостя — сохраняйте локально (`PlayerPrefs`); в Editor — Simulation или ключ в окне VHR |
+| Сохранения → `Disabled` (`game_not_found`) | Реальный игрок в неопубликованной игре | Проверяйте черновик в Editor Live; после публикации заработает |
+| Сохранения → `RateLimited` | `SaveAsync` слишком часто (> 12 записей в минуту на игрока) | Используйте `QueueSave` (+ `FlushAsync` в ключевых точках) |
+| Сохранения → `QuotaExceeded` | Квота облачных сохранений игры исчерпана | Кабинет разработчика → игра → «Облачные сохранения» → пакет; уменьшите размер сохранений |
+| Автосохранение «замолчало», в консоли «конфликт версий» | Слот перезаписан с другого устройства/вкладки, `OnConflict` не обработан | Подпишитесь на `OnConflict`: `LoadAsync` (взять облачное) или `SaveAsync(slot, data, serverVersion)` |

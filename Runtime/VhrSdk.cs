@@ -20,7 +20,7 @@ namespace VhrGames.Sdk
     public static class VhrSdk
     {
         /// <summary>SDK semantic version. Mirrored into the build marker and sent as <c>X-Vhr-Sdk-Version</c>.</summary>
-        public const string SdkVersion = "1.10.1";
+        public const string SdkVersion = "1.11.0";
 
         private static VhrSession _session;
         private static VhrSdkOptions _options;
@@ -73,6 +73,20 @@ namespace VhrGames.Sdk
         /// if (r.IsRewarded) GiveExtraLife();
         /// </code></example>
         public static IVhrAds Ads { get; private set; }
+
+        /// <summary>
+        /// Облачные сохранения игрока (SDK 1.11.0+): загрузка при старте, автосохранение
+        /// <see cref="IVhrSaves.QueueSave"/> с отправкой не чаще раза в
+        /// <see cref="VhrSdkOptions.SavesMinIntervalSeconds"/> и сразу при потере фокуса /
+        /// закрытии страницы, конфликты версий между устройствами (см. <see cref="IVhrSaves"/>).
+        /// Тот же экземпляр, что внедряет <see cref="VhrSdkLifetimeScope"/>. Null until initialized.
+        /// </summary>
+        /// <example><code>
+        /// var progress = await VhrSdk.Saves.LoadJsonAsync("default", new Progress());
+        /// // ...по ходу игры:
+        /// VhrSdk.Saves.QueueSaveJson("default", progress);
+        /// </code></example>
+        public static IVhrSaves Saves { get; private set; }
 
         /// <summary>Session / connection-state holder. Null until initialized.</summary>
         public static IVhrSession Session => _session;
@@ -182,6 +196,8 @@ namespace VhrGames.Sdk
             // Общий экземпляр: DI (VhrSdkLifetimeScope) получает тот же объект,
             // иначе подписки OnAdOpened/OnAdClosed на «другой» сервис не срабатывали бы.
             Ads = VhrAdsService.GetOrCreate(options, log);
+            // Тоже общий: одна очередь автосохранения и одни подписки на жизненный цикл.
+            Saves = VhrSavesService.GetOrCreate(api, options, log);
 
             var editorMode = options.IsEditorLiveSandbox ? " [Editor: Live-песочница]"
                 : options.IsEditorSimulation ? " [Editor: Simulation]" : string.Empty;
@@ -266,6 +282,8 @@ namespace VhrGames.Sdk
             GameSessions = null;
             VhrAdsService.ResetShared();
             Ads = null;
+            VhrSavesService.ResetShared();
+            Saves = null;
             _initTask = null;
             IsInitialized = false;
         }

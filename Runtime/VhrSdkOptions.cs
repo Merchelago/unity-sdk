@@ -148,6 +148,19 @@ namespace VhrGames.Sdk
         /// <summary>Длительность симулированной рекламы в секундах реального времени. По умолчанию 1.5.</summary>
         public float AdsSimulationDelaySeconds = 1.5f;
 
+        /// <summary>Нижняя граница <see cref="SavesMinIntervalSeconds"/>: 5 секунд.</summary>
+        public const float MinSavesIntervalSeconds = 5f;
+
+        /// <summary>
+        /// Автосохранение (<see cref="IVhrSaves.QueueSave"/>, SDK 1.11.0+): отправлять
+        /// накопленное сохранение одного слота не чаще раза в столько секунд реального
+        /// времени. По умолчанию 10, меньше <see cref="MinSavesIntervalSeconds"/> (5)
+        /// нельзя — <see cref="Validate"/> поднимет значение до 5. Сервер принимает не
+        /// больше 12 записей в минуту на игрока в игре (все слоты вместе), поэтому SDK
+        /// дополнительно держит автосохранения в пределах 10 записей в минуту.
+        /// </summary>
+        public float SavesMinIntervalSeconds = 10f;
+
         /// <summary>
         /// Режим работы SDK <b>в Unity Editor</b> (SDK 1.9.0+). В сборках игнорируется.
         /// <list type="bullet">
@@ -155,8 +168,9 @@ namespace VhrGames.Sdk
         /// <c>VHR → Тестирование в Editor</c>: Live, если там включён Live и сохранён
         /// песочный ключ, иначе Simulation.</item>
         /// <item><see cref="VhrEditorMode.Simulation"/> — экономика локальная (тестовый
-        /// баланс, диалог подтверждения покупки), реклама симулируется, остальные
-        /// сервисы — как в 1.8 (HTTP с вашим <see cref="TokenProvider"/>).</item>
+        /// баланс, диалог подтверждения покупки), реклама симулируется, облачные
+        /// сохранения — в локальной папке проекта (<c>Library/VhrSdk/SimSaves</c>) с
+        /// лимитами сервера; остальные сервисы — как в 1.8 (HTTP с вашим <see cref="TokenProvider"/>).</item>
         /// <item><see cref="VhrEditorMode.LiveSandbox"/> — ВСЕ сервисы ходят на настоящий
         /// сервер с песочным ключом из окна VHR (тестовый игрок <c>sbx_*</c>, 10 000
         /// тестовых монет); <see cref="GameId"/> берётся из claim <c>gid</c> ключа.</item>
@@ -225,6 +239,12 @@ namespace VhrGames.Sdk
                 throw new VhrSdkException("config_invalid", "VhrSdkOptions.GameId is required.");
             if (RequestTimeoutSeconds <= 0)
                 throw new VhrSdkException("config_invalid", "VhrSdkOptions.RequestTimeoutSeconds must be > 0.");
+
+            // Интервал автосохранения: не чаще раза в 5 с на слот (лимит сервера — 12 записей в минуту).
+            if (float.IsNaN(SavesMinIntervalSeconds) || float.IsInfinity(SavesMinIntervalSeconds))
+                SavesMinIntervalSeconds = 10f;
+            if (SavesMinIntervalSeconds < MinSavesIntervalSeconds)
+                SavesMinIntervalSeconds = MinSavesIntervalSeconds;
 
             // InternalApiKey НЕ обязателен: клиентские WebGL-сборки авторизуются
             // JWT игрока, серверный ключ — опционален и только для серверов.
@@ -382,7 +402,7 @@ namespace VhrGames.Sdk
 
         /// <summary>
         /// Локальная симуляция: экономика (тестовый баланс + диалог подтверждения
-        /// покупки) и реклама без сервера; остальные сервисы — как в SDK 1.8.
+        /// покупки), реклама и облачные сохранения без сервера; остальные сервисы — как в SDK 1.8.
         /// </summary>
         Simulation = 1,
 
@@ -416,6 +436,13 @@ namespace VhrGames.Sdk
 
         /// <summary>Сырое тело ответа сервера при HTTP-ошибке (может быть <c>null</c>).</summary>
         public string ResponseBody { get; }
+
+        /// <summary>
+        /// Пауза до повтора из заголовка <c>Retry-After</c> (секунды), обычно у <c>429</c>;
+        /// 0 — сервер её не указал (или браузер скрыл заголовок: на WebGL он виден, только
+        /// если сервер разрешил его через <c>Access-Control-Expose-Headers</c>). SDK 1.11.0+.
+        /// </summary>
+        public int RetryAfterSeconds { get; internal set; }
 
         /// <summary>Creates a new SDK exception.</summary>
         public VhrSdkException(string code, string message, long httpStatus = 0, Exception inner = null)

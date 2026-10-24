@@ -237,7 +237,7 @@ bool boss = mine.Any(u => u.achievement?.code == VhrCatalogIds.Achievements.Firs
    ключ (действует 30 дней).
 2. **Окно.** Unity → меню **`VHR → Тестирование в Editor`** → вставьте ключ → **«Проверить»**
    (покажет игру, тестового игрока, баланс и срок ключа). «Проверить все API» прогонит read-only
-   запросы ко всем сервисам.
+   запросы ко всем сервисам и цикл облачных сохранений на тестовом слоте.
 3. **Live.** Переключите режим на **«Live (песочница)»** и нажмите Play. SDK сам подставит ключ
    (`Authorization: Bearer`) и `GameId` из ключа; адреса — те же, что в сборке.
 4. **Тест.** Покупки (`PurchaseAsync` покажет диалог-имитацию окна платформы → confirm/cancel на
@@ -246,8 +246,8 @@ bool boss = mine.Any(u => u.achievement?.code == VhrCatalogIds.Achievements.Firs
 
 | Режим | Что происходит |
 |---|---|
-| **Simulation** (по умолчанию, если ключа нет) | Экономика локальная: баланс 10 000, диалог подтверждения, цены — `SimulatedItemPrices` / `SimulatedDefaultItemPrice`; реклама — симуляция; остальные сервисы — как в 1.8 (HTTP с вашим `TokenProvider`) |
-| **Live (песочница)** | Все сервисы — настоящий сервер с песочным ключом; реклама — локальная симуляция (доход не репортится) |
+| **Simulation** (по умолчанию, если ключа нет) | Экономика локальная: баланс 10 000, диалог подтверждения, цены — `SimulatedItemPrices` / `SimulatedDefaultItemPrice`; реклама — симуляция; облачные сохранения — локально в `Library/VhrSdk/SimSaves` с лимитами сервера; остальные сервисы — как в 1.8 (HTTP с вашим `TokenProvider`) |
+| **Live (песочница)** | Все сервисы (и облачные сохранения) — настоящий сервер с песочным ключом; реклама — локальная симуляция (доход не репортится) |
 
 Режим задаётся в окне; из кода — `VhrSdkOptions.EditorMode = VhrEditorMode.Auto | Simulation | LiveSandbox`
 (`Auto` — как в окне). В сборках режим не используется.
@@ -316,7 +316,7 @@ UnityNuGet; NuGetForUnity и `.unitypackage` больше не нужны.
 **2. SDK по git URL** — `Package Manager ▸ + ▸ Add package from git URL…`:
 
 ```
-https://github.com/Merchelago/unity-sdk.git#v1.10.1
+https://github.com/Merchelago/unity-sdk.git#v1.11.0
 ```
 
 R3, его ядро и VContainer подтянутся сами как зависимости SDK. Итоговый `Packages/manifest.json`:
@@ -324,7 +324,7 @@ R3, его ядро и VContainer подтянутся сами как зави�
 ```json
 {
   "dependencies": {
-    "ru.vhrgames.sdk": "https://github.com/Merchelago/unity-sdk.git#v1.10.1"
+    "ru.vhrgames.sdk": "https://github.com/Merchelago/unity-sdk.git#v1.11.0"
   },
   "scopedRegistries": [
     { "name": "OpenUPM", "url": "https://package.openupm.com", "scopes": ["com.cysharp", "jp.hadashikick"] },
@@ -589,6 +589,175 @@ var options = new VhrSdkOptions
 
 ---
 
+## Облачные сохранения (`VhrSdk.Saves`, SDK 1.11.0+)
+
+Прогресс игрока хранится на сервере VHR: переживает очистку браузера, переносится между
+устройствами, другие игры его не видят. Игрок и игра берутся из игрового токена — `userId`
+передавать не нужно. Доступ: `VhrSdk.Saves` или внедрение `IVhrSaves` (VContainer) — один
+общий экземпляр.
+
+Сохранение — **строка** (обычно JSON) в именованном **слоте** (`[a-z0-9_.-]`, 1–64 символа,
+SDK приводит имя к нижнему регистру; по умолчанию `"default"`). У слота есть **версия**: 1 при
+создании, +1 на каждую запись — по ней SDK замечает, что слот перезаписали с другого
+устройства или вкладки.
+
+| Член | Что делает |
+|---|---|
+| `LoadAsync(slot = "default")` → `VhrSaveLoadResult` | `Found`, `Data`, `Version`, `UpdatedAt`, `Error`. Нет сохранения — `Found = false`, `Error = NotFound` |
+| `LoadJsonAsync<T>(slot, fallback)` | То же + `JsonUtility.FromJson<T>`; нет сохранения или ошибка — `fallback` |
+| `SaveAsync(slot, data, expectedVersion = null)` → `VhrSaveWriteResult` | Записать сразу: `Ok`, `Version`, `Error`, `ServerVersion` (при конфликте), `RetryAfterSeconds` (при 429) |
+| `SaveJsonAsync<T>(slot, value, expectedVersion)` | То же для объекта (`JsonUtility.ToJson`) |
+| `DeleteAsync(slot)` → `bool` | Удалить слот (идемпотентно) и освободить место в квоте |
+| `ListAsync()` → `IReadOnlyList<VhrSaveSlotInfo>` | Слоты игрока без данных: `slot`, `version`, `rawSize`, `updatedAt`. При ошибке — `VhrSdkException` |
+| `QueueSave(slot, data)` / `QueueSaveJson<T>(slot, value)` | **Автосохранение**: копит последнее состояние и отправляет не чаще раза в `SavesMinIntervalSeconds` на слот |
+| `FlushAsync()` | Отправить накопленное сейчас и дождаться записей «в полёте» |
+| `event OnConflict(slot, serverVersion)` | Автосохранение упёрлось в чужую запись (409) — слот на паузе, решите, чья версия главнее |
+| `event OnAutoSaveResult(slot, result)` | Итог каждой отправки автосохранения (для значка «Сохранено в облаке») |
+| `HasPendingSaves`, `Limits` | Есть ли неотправленное; лимиты слота от сервера |
+
+`expectedVersion`: `null` — перезаписать как есть; `0` — только создать (слот уже есть →
+`Conflict`); `N` — записать, только если на сервере сейчас версия `N`.
+
+### Пример: загрузка при старте и автосохранение
+
+```csharp
+using System;
+using UnityEngine;
+using VhrGames.Sdk;
+
+[Serializable]
+public class Progress
+{
+    public int level = 1;
+    public long gold;
+    public string[] unlocked = Array.Empty<string>();
+}
+
+public class SaveSystem : MonoBehaviour
+{
+    private const string Slot = "default";
+    private Progress _progress = new Progress();
+
+    // Вызвать после VhrSdk.InitializeAsync(...) (или из DI — IVhrSaves в конструктор).
+    public async void LoadOnStart()
+    {
+        var saves = VhrSdk.Saves;
+        saves.OnConflict += OnConflict;
+        saves.OnAutoSaveResult += (slot, r) =>
+        {
+            if (!r.Ok) Debug.LogWarning($"Облако: {r.Error} ({r.ErrorCode})");
+        };
+
+        var r = await saves.LoadAsync(Slot);
+        if (r.Found)
+            _progress = JsonUtility.FromJson<Progress>(r.Data);
+        else if (r.Error == VhrSaveError.NotFound)
+            _progress = new Progress();          // первый запуск — новая игра
+        else
+            _progress = LoadLocalCopy();         // гость / нет сети: локальная копия, облако не трогаем
+    }
+
+    // На каждое изменение прогресса — дёшево, можно часто.
+    public void OnLevelCompleted(int level, long gold)
+    {
+        _progress.level = level + 1;
+        _progress.gold = gold;
+        VhrSdk.Saves.QueueSaveJson(Slot, _progress);   // уйдёт в фоне, не чаще раза в 10 с
+        SaveLocalCopy(_progress);                     // офлайн-страховка (PlayerPrefs)
+    }
+
+    // Важные точки (выход в меню, конец сессии) — дождаться отправки.
+    public async void OnExitToMenu() => await VhrSdk.Saves.FlushAsync();
+
+    // Слот перезаписали с другого устройства/вкладки: берём облачное и сливаем со своим.
+    private async void OnConflict(string slot, long serverVersion)
+    {
+        var cloud = await VhrSdk.Saves.LoadJsonAsync<Progress>(slot);   // снимает конфликт
+        if (cloud != null && cloud.level > _progress.level) _progress = cloud;
+        VhrSdk.Saves.QueueSaveJson(slot, _progress);                    // пишет поверх новой версии
+    }
+
+    private static Progress LoadLocalCopy() =>
+        JsonUtility.FromJson<Progress>(PlayerPrefs.GetString("progress", "{}")) ?? new Progress();
+
+    private static void SaveLocalCopy(Progress p) => PlayerPrefs.SetString("progress", JsonUtility.ToJson(p));
+}
+```
+
+Как работает автосохранение:
+- первое `QueueSave` слота уходит сразу, следующие склеиваются и отправляются не чаще раза в
+  `VhrSdkOptions.SavesMinIntervalSeconds` (по умолчанию **10 с**, минимум 5) — уходит последнее значение;
+  все автосохранения вместе SDK держит в пределах 10 записей в минуту (лимит сервера — 12);
+- накопленное отправляется **сразу** при потере фокуса (на телефоне — и перед паузой приложения),
+  скрытии вкладки, сворачивании браузера, закрытии страницы и выходе из игры;
+- после `429` — повтор через `Retry-After`; при обрыве связи — повтор с паузой 5 → 10 → … → 60 с,
+  данные живут в памяти до успешной отправки;
+- если слот загружали (`LoadAsync`), запись идёт с проверкой версии: чужая запись → `OnConflict`,
+  облачные данные не перезаписываются вслепую. Если загрузка не удалась (нет сети) — автосохранение
+  пишет с `expectedVersion = 0` и тоже не затрёт облачный прогресс.
+
+> ⚠️ Закрытие вкладки — «лучшее усилие»: браузер может оборвать запрос. Вызывайте `FlushAsync()` в
+> естественных точках (конец уровня, выход в меню), а не надейтесь только на автосохранение при выходе.
+
+### Лимиты
+
+| Что | Лимит |
+|---|---|
+| Размер слота | ≤ **256 КБ** после сжатия (gzip) и ≤ **1 МБ** до сжатия |
+| Слотов на игрока в игре | ≤ **10** |
+| Частота | **12** записей/удалений и **60** чтений в минуту на игрока в игре (все слоты вместе) → `429` |
+| Объём всех сохранений игры | **Квота игры**: 50 МБ бесплатно (по сжатому размеру), сверх — платные пакеты |
+
+**Квота платная сверх бесплатной — её оплачивает разработчик**, не игрок: кабинет разработчика →
+игра → **«Облачные сохранения»** → пакеты на 30 дней за монеты баланса (с автопродлением). При 90% и
+100% квоты разработчику приходит уведомление. Когда квота исчерпана, запись, **увеличивающая** объём,
+получает `QuotaExceeded`; уменьшающая или равная — проходит. Игроку в этом случае покажите «облако
+временно недоступно» и сохраняйте локально.
+
+### Ошибки (`VhrSaveError`)
+
+| Значение | Когда | Что делать |
+|---|---|---|
+| `NotFound` | Сохранения в слоте нет | Новая игра |
+| `Conflict` | Слот уже перезаписан (версия не совпала) | Загрузить облачное, слить, сохранить ещё раз |
+| `QuotaExceeded` | Квота игры исчерпана | Разработчику — докупить пакет; игроку — сохранить локально |
+| `SlotTooLarge` | > 256 КБ сжато или > 1 МБ сырых | Хранить только прогресс, не кэш/ассеты |
+| `SlotsLimit` | Уже 10 слотов | Писать в существующий / удалить ненужный |
+| `RateLimited` | > 12 записей в минуту | Использовать `QueueSave`; автосохранение повторит само |
+| `NotAuthenticated` | Гость / игра открыта не с vhrgames.ru / нет ключа в Editor | Сохранять локально |
+| `Disabled` | Сохранения выключены платформой или игра не опубликована | Сохранять локально |
+| `Network` | Нет связи | Автосохранение повторит; явный `SaveAsync` — повторить позже |
+| `BadSlot` | Неверное имя слота / тело запроса | Исправить имя (`a-z0-9_.-`) |
+| `Unknown` | Ошибка сервера (5xx), устаревший SDK (`426`) | См. `ErrorCode` / `Message` |
+
+### Рекомендации
+
+- **Маленький JSON.** Только то, что нужно для продолжения игры: уровень, валюта, открытия,
+  настройки. Не кладите кэш, скриншоты, логи, base64-картинки — упрётесь в 256 КБ и в квоту игры.
+- **`QueueSave` вместо `SaveAsync` каждый кадр.** `SaveAsync` — для разовых явных записей
+  (кнопка «Сохранить»). Частые вызовы упрутся в `429`.
+- **Загружайте слот при старте** (`LoadAsync`) — тогда автосохранение защищено от перезаписи
+  прогресса с другого устройства, и вы отличите «новая игра» (`NotFound`) от «нет сети».
+- **Обрабатывайте `OnConflict`** (игрок играет в двух вкладках или на двух устройствах) и
+  `QuotaExceeded` (через `OnAutoSaveResult`).
+- **Офлайн и гость.** Без входа на vhrgames.ru облака нет (`NotAuthenticated`) — держите локальную
+  копию в `PlayerPrefs` (на WebGL это IndexedDB браузера) и показывайте «войдите, чтобы прогресс
+  сохранялся в облаке». При обрыве связи автосохранение повторит отправку само.
+- **Не меняйте формат молча.** Добавляйте в JSON поле версии формата и мигрируйте старые
+  сохранения при загрузке.
+
+### Редактор
+
+- **Simulation** — локальное «облако» в `Library/VhrSdk/SimSaves` проекта (не в VCS и не в сборке,
+  переживает перезапуск редактора) с теми же правилами: версии, конфликты, 256 КБ / 1 МБ, 10 слотов,
+  1024 КБ на песочного игрока, 12 записей и 60 чтений в минуту. Окно **`VHR → Тестирование в Editor`**
+  показывает объём и умеет очистить локальные сохранения.
+- **Live (песочница)** — настоящий сервер с песочным ключом (сохранения тестового игрока `sbx_*`,
+  лимит 1024 КБ на игру, квоту игры не тратят; удаляются, если не обновлялись 30 дней). «Проверить все API»
+  прогоняет цикл запись → чтение → версия → конфликт → удаление на тестовом слоте `vhr_sdk_selftest`.
+
+---
+
 ## Публичный API кратко
 
 | Сервис | Ключевые методы |
@@ -598,8 +767,9 @@ var options = new VhrSdkOptions
 | `IVhrLeaderboard` | `GetGlobalAsync(limit)`, `GetForGameAsync(gameId, limit)` → `VhrLeaderboardRow[]`, `SubmitScoreAsync(gameId, score)` → `VhrLeaderboardRow` |
 | `IVhrServers` | `BindAsync`, `ListBindingsAsync`, `RequestInstanceAsync` (по умолчанию noop) |
 | `IVhrAds` | `ShowInterstitialAsync`, `ShowRewardedAsync` (+ колбэк-версии) → `VhrAdResult { Status }` · события `OnAdOpened` / `OnAdClosed` · `AutoPause`, `IsSupported`, `IsShowing` |
+| `IVhrSaves` | `LoadAsync` / `LoadJsonAsync<T>`, `SaveAsync` / `SaveJsonAsync<T>`, `DeleteAsync`, `ListAsync`, автосохранение `QueueSave` / `QueueSaveJson<T>` + `FlushAsync` · события `OnConflict` / `OnAutoSaveResult` · `HasPendingSaves`, `Limits` |
 | `IVhrSession` | `GameId`, `CurrentToken`, `State`, `Observable<VhrConnectionState> StateChanged` |
-| `VhrSdk` (static) | `InitializeAsync`, `Economy`, `Ads`, `Leaderboard`, `Servers`, `Session`, `ConnectionState` |
+| `VhrSdk` (static) | `InitializeAsync`, `Economy`, `Ads`, `Saves`, `Leaderboard`, `Servers`, `Session`, `ConnectionState` |
 
 Покупки **идемпотентны** через `externalId` (по умолчанию — новый GUID);
 передайте свой стабильный id, чтобы повтор не купил дважды.

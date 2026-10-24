@@ -105,7 +105,15 @@ namespace VhrGames.Sdk
             if (!transportOk && string.IsNullOrEmpty(error))
                 error = req.error ?? "connection_error";
 
-            return new VhrHttpResponse(status, body, isSuccess, error);
+            // Retry-After нужен только ответам с ошибкой (429/503) — на успешных не тратимся.
+            string retryAfter = null;
+            if (!isSuccess && status > 0)
+            {
+                try { retryAfter = req.GetResponseHeader("Retry-After"); }
+                catch { retryAfter = null; }
+            }
+
+            return new VhrHttpResponse(status, body, isSuccess, error, retryAfter);
         }
 
         private static string Truncate(string s)

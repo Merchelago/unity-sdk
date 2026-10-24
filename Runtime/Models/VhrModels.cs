@@ -351,13 +351,28 @@ namespace VhrGames.Sdk
         /// <summary>Transport / protocol error text, if any.</summary>
         public readonly string Error;
 
+        /// <summary>
+        /// Сырое значение заголовка <c>Retry-After</c> (секунды или HTTP-дата) у ответа с
+        /// ошибкой, иначе <c>null</c>. SDK 1.11.0+: по нему облачные сохранения повторяют
+        /// запись после <c>429</c>. На WebGL браузер отдаёт его, только если сервер разрешил
+        /// заголовок через <c>Access-Control-Expose-Headers</c>.
+        /// </summary>
+        public readonly string RetryAfter;
+
         /// <summary>Creates an HTTP response value.</summary>
         public VhrHttpResponse(long statusCode, string body, bool isSuccess, string error)
+            : this(statusCode, body, isSuccess, error, null)
+        {
+        }
+
+        /// <summary>Создаёт ответ с заголовком <c>Retry-After</c> (SDK 1.11.0+).</summary>
+        public VhrHttpResponse(long statusCode, string body, bool isSuccess, string error, string retryAfter)
         {
             StatusCode = statusCode;
             Body = body;
             IsSuccess = isSuccess;
             Error = error;
+            RetryAfter = string.IsNullOrWhiteSpace(retryAfter) ? null : retryAfter.Trim();
         }
     }
 }

@@ -85,7 +85,10 @@ namespace VhrGames.Sdk
             bool allowNotImplemented = false,
             CancellationToken ct = default)
         {
-            string json = body == null ? null : JsonUtility.ToJson(body);
+            // VhrRawJson — уже готовый JSON (JsonUtility не умеет null у long? и т.п.).
+            string json = body == null ? null
+                : body is VhrRawJson rawJson ? rawJson.Json
+                : JsonUtility.ToJson(body);
 
             // WebGL: игровой токен живёт 60 мин и обновляется хостом. Если он уже
             // истёк/вот-вот истечёт — попросим свежий ДО запроса (без лишнего 401).
@@ -119,7 +122,10 @@ namespace VhrGames.Sdk
                     $"{method} {absoluteUrl} failed: {resp.Error} (status {resp.StatusCode}) body={resp.Body}",
                     resp.StatusCode,
                     TryReadServerCode(resp.Body),
-                    resp.Body);
+                    resp.Body)
+                {
+                    RetryAfterSeconds = ParseRetryAfter(resp.RetryAfter)
+                };
             }
 
             return string.IsNullOrWhiteSpace(resp.Body) ? null : resp.Body;
@@ -297,6 +303,26 @@ namespace VhrGames.Sdk
             return false;
         }
 
+        /// <summary>
+        /// Заголовок <c>Retry-After</c> → секунды: целое число секунд или HTTP-дата
+        /// (RFC 7231). 0 — заголовка нет или он не разобрался.
+        /// </summary>
+        internal static int ParseRetryAfter(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return 0;
+            var v = value.Trim();
+            if (int.TryParse(v, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+                return Math.Max(0, seconds);
+            if (DateTimeOffset.TryParse(v, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal, out var at))
+            {
+                var left = (at - DateTimeOffset.UtcNow).TotalSeconds;
+                return left <= 0 ? 0 : (int)Math.Ceiling(Math.Min(left, int.MaxValue));
+            }
+            return 0;
+        }
+
         private static string MapErrorCode(long status) => status switch
         {
             401 => "unauthorized",
@@ -314,6 +340,18 @@ namespace VhrGames.Sdk
     /// <summary>Marker type for endpoints with no meaningful response body.</summary>
     [Serializable]
     public sealed class VhrVoid { }
+
+    /// <summary>
+    /// Тело запроса, уже сериализованное в JSON: <see cref="VhrApiClient"/> отправит
+    /// его как есть, без <see cref="JsonUtility"/> (тот не умеет <c>null</c> у
+    /// <c>long?</c> и строки-JSON внутри JSON). Используют облачные сохранения.
+    /// </summary>
+    internal sealed class VhrRawJson
+    {
+        public readonly string Json;
+
+        public VhrRawJson(string json) => Json = json;
+    }
 
     /// <summary>
     /// Ожидания SDK — только по кадрам Unity и реальному времени. На WebGL нет тредпула и

@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
 using UnityEditor;
 using UnityEngine;
 
@@ -39,6 +41,14 @@ namespace VhrGames.Sdk.Editor
         private bool _resetting;
         private string _resetMessage;
 
+        // Тестовый слот облачных сохранений для «Проверить все API» (создаётся и удаляется).
+        private const string SelfTestSlot = "vhr_sdk_selftest";
+
+        // Локальные сохранения Simulation: статистика с кешем (файлы не читаем на каждый OnGUI).
+        private int _simSlots;
+        private long _simBytes;
+        private double _simStatsAt = -1;
+
         [MenuItem(MenuPath, priority = 10)]
         public static void Open()
         {
@@ -62,9 +72,10 @@ namespace VhrGames.Sdk.Editor
             EditorGUILayout.Space(6);
             EditorGUILayout.LabelField("Тестирование VHR SDK в Unity Editor", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
-                "Simulation — всё локально: тестовый баланс, диалог подтверждения покупки, симуляция рекламы.\n" +
+                "Simulation — всё локально: тестовый баланс, диалог подтверждения покупки, симуляция рекламы, " +
+                "облачные сохранения в папке Library проекта (с лимитами сервера).\n" +
                 "Live (песочница) — все API SDK ходят на настоящий сервер VHR от имени тестового игрока " +
-                "(10 000 тестовых монет): покупки, лидерборды, ачивки, профиль, друзья, лобби и релей. " +
+                "(10 000 тестовых монет): покупки, облачные сохранения, лидерборды, ачивки, профиль, друзья, лобби и релей. " +
                 "Реальные деньги не тратятся.",
                 MessageType.Info);
 
@@ -220,7 +231,9 @@ namespace VhrGames.Sdk.Editor
 
             if (_smoke.Count > 0)
             {
-                EditorGUILayout.LabelField("Read-only проверка API (GET, данные не меняются):", EditorStyles.miniBoldLabel);
+                EditorGUILayout.LabelField(
+                    "Проверка API: GET ко всем сервисам (данные не меняются) + цикл облачных сохранений на тестовом слоте " +
+                    $"«{SelfTestSlot}» (создаётся и удаляется):", EditorStyles.wordWrappedMiniLabel);
                 foreach (var row in _smoke)
                 {
                     using (new EditorGUILayout.HorizontalScope())
@@ -246,6 +259,61 @@ namespace VhrGames.Sdk.Editor
                 $"Сброс: баланс тестового игрока снова {VhrEditorSandbox.StartBalance}, покупки и инвентарь по этой игре очищены " +
                 $"(в Live — на сервере, в Simulation — локально; сейчас локальный баланс {VhrEditorSandbox.SimBalance}).",
                 EditorStyles.wordWrappedMiniLabel);
+
+            EditorGUILayout.Space(6);
+            DrawSimSaves();
+        }
+
+        private void DrawSimSaves()
+        {
+            if (_simStatsAt < 0 || EditorApplication.timeSinceStartup - _simStatsAt > 2.0)
+                RefreshSimStats();
+
+            EditorGUILayout.LabelField("Облачные сохранения в режиме Simulation", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(
+                $"Локально: слотов {_simSlots}, {_simBytes / 1024f:0.#} КБ после сжатия. Лимиты — как у песочного игрока на сервере: " +
+                $"слот ≤ {VhrEditorSaves.MaxSlotKb} КБ сжато и ≤ {VhrEditorSaves.MaxRawKb} КБ сырых, слотов ≤ {VhrEditorSaves.MaxSlots}, " +
+                $"всего ≤ {VhrEditorSaves.SandboxQuotaKb} КБ, 12 записей и 60 чтений в минуту. Папка: Library/VhrSdk/SimSaves " +
+                "(не в VCS и не в сборке, переживает перезапуск редактора). В Live сохранения тестового игрока хранятся на сервере.",
+                EditorStyles.wordWrappedMiniLabel);
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button("Открыть папку"))
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(VhrEditorSaves.Folder);
+                        EditorUtility.RevealInFinder(VhrEditorSaves.Folder);
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning("[VHR SDK] Не удалось открыть папку сохранений: " + e.Message);
+                    }
+                }
+                using (new EditorGUI.DisabledScope(_simSlots == 0))
+                {
+                    if (GUILayout.Button("Очистить локальные сохранения") &&
+                        EditorUtility.DisplayDialog("VHR — облачные сохранения (Simulation)",
+                            $"Удалить локальные сохранения симуляции этого проекта (слотов: {_simSlots})? " +
+                            "Сохранения на сервере (режим Live) это не затрагивает.", "Удалить", "Отмена"))
+                    {
+                        VhrEditorSaves.Clear();
+                        RefreshSimStats();
+                    }
+                }
+            }
+        }
+
+        private void RefreshSimStats()
+        {
+            _simStatsAt = EditorApplication.timeSinceStartup;
+            try { VhrEditorSaves.Stats(out _simSlots, out _simBytes); }
+            catch
+            {
+                _simSlots = 0;
+                _simBytes = 0;
+            }
         }
 
         private void CheckSandbox(VhrJwt.Info info)
@@ -306,6 +374,126 @@ namespace VhrGames.Sdk.Editor
             Add("Друзья", games + "Friends");
             Add("Турниры", games + "Tournaments?status=active");
             Add("Серверы: привязки", api + "/servers/api/bindings?gameId=" + gid);
+            Add("Сохранения: список", bridge + "saves");
+            RunSavesSmoke(info);
+        }
+
+        private SmokeRow StartRow(string name)
+        {
+            var row = new SmokeRow { Name = name };
+            _smoke.Add(row);
+            _smokePending++;
+            Repaint();
+            return row;
+        }
+
+        private void FinishRow(SmokeRow row, bool ok, string result)
+        {
+            row.Done = true;
+            row.Ok = ok;
+            row.Result = result;
+            _smokePending = Math.Max(0, _smokePending - 1);
+            Repaint();
+        }
+
+        /// <summary>
+        /// Цикл облачных сохранений тестового игрока на тестовом слоте: запись → чтение
+        /// (данные с кириллицей совпали) → запись с версией (+1) → запись с устаревшей
+        /// версией (ожидается <c>409 version_conflict</c>) → удаление → чтение
+        /// (ожидается <c>404 save_not_found</c>). 4 записи из 12 разрешённых в минуту.
+        /// </summary>
+        private void RunSavesSmoke(VhrJwt.Info info)
+        {
+            var url = VhrEditorSandbox.BridgeBaseUrl + "/api/saves/" + SelfTestSlot;
+            var key = VhrEditorSandbox.Key;
+            var gid = info.GameId;
+            var stamp = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+            var data1 = "{\"selfTest\":1,\"at\":\"" + stamp + "\",\"text\":\"Проверка сохранений \\\"VHR\\\" ✓\"}";
+            var data2 = "{\"selfTest\":2,\"at\":\"" + stamp + "\"}";
+
+            void Send(string method, string body, Action<VhrEditorHttp.Response> done)
+                => VhrEditorHttp.Send(method, url, key, gid, body, done);
+
+            void Cleanup() => Send("DELETE", null, _ => { });
+
+            string Failed(VhrEditorHttp.Response r, string expected = null)
+                => r.Short() + " — " + Trim(expected ?? r.Body ?? r.Error, 120);
+
+            var put1 = StartRow("Сохранения: запись");
+            Send("PUT", VhrSavesService.BuildPutBody(data1, null), r1 =>
+            {
+                var w1 = ParseSave(r1.Body);
+                if (!r1.Ok || w1 == null || w1.version <= 0)
+                {
+                    FinishRow(put1, false, Failed(r1));
+                    return;
+                }
+                var v1 = w1.version;
+                FinishRow(put1, true, $"{r1.Short()}, версия {v1}, сжато {w1.storedSize} Б");
+
+                var get1 = StartRow("Сохранения: чтение");
+                Send("GET", null, r2 =>
+                {
+                    var g = ParseSave(r2.Body);
+                    var same = g != null && g.data == data1;
+                    var ok2 = r2.Ok && same && g.version == v1;
+                    FinishRow(get1, ok2, ok2
+                        ? $"{r2.Short()}, данные совпали, версия {g.version}"
+                        : Failed(r2, r2.Ok ? $"версия {g?.version}, данные {(same ? "совпали" : "НЕ совпали")}" : null));
+                    if (!ok2)
+                    {
+                        Cleanup();
+                        return;
+                    }
+
+                    var put2 = StartRow("Сохранения: версия +1");
+                    Send("PUT", VhrSavesService.BuildPutBody(data2, v1), r3 =>
+                    {
+                        var w2 = ParseSave(r3.Body);
+                        var ok3 = r3.Ok && w2 != null && w2.version == v1 + 1;
+                        FinishRow(put2, ok3, ok3
+                            ? $"{r3.Short()}, expectedVersion {v1} → версия {w2.version}"
+                            : Failed(r3, r3.Ok ? $"ожидалась версия {v1 + 1}, пришла {w2?.version}" : null));
+                        if (!ok3)
+                        {
+                            Cleanup();
+                            return;
+                        }
+
+                        var stale = StartRow("Сохранения: конфликт версий");
+                        Send("PUT", VhrSavesService.BuildPutBody(data1, v1), r4 =>
+                        {
+                            var e = ParseSave(r4.Body);
+                            var ok4 = r4.Status == 409 && VhrApiClient.TryReadServerCode(r4.Body) == "version_conflict" &&
+                                      e != null && e.serverVersion == v1 + 1;
+                            FinishRow(stale, ok4, ok4
+                                ? $"409 version_conflict, на сервере версия {e.serverVersion}"
+                                : Failed(r4, $"ожидался 409 version_conflict с serverVersion {v1 + 1}"));
+
+                            var del = StartRow("Сохранения: удаление");
+                            Send("DELETE", null, r5 =>
+                            {
+                                FinishRow(del, r5.Ok, r5.Ok ? r5.Short() : Failed(r5));
+                                if (!r5.Ok) return;
+
+                                var gone = StartRow("Сохранения: после удаления");
+                                Send("GET", null, r6 =>
+                                {
+                                    var ok6 = r6.Status == 404 && VhrApiClient.TryReadServerCode(r6.Body) == "save_not_found";
+                                    FinishRow(gone, ok6, ok6 ? "404 save_not_found" : Failed(r6, "ожидался 404 save_not_found"));
+                                });
+                            });
+                        });
+                    });
+                });
+            });
+        }
+
+        private static SaveDto ParseSave(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body) || body.TrimStart()[0] != '{') return null;
+            try { return JsonUtility.FromJson<SaveDto>(body); }
+            catch { return null; }
         }
 
         private void ResetData(bool keyOk, VhrJwt.Info info)
@@ -430,6 +618,19 @@ namespace VhrGames.Sdk.Editor
             public string gameId;
             public long balance;
             public string expiresAt;
+        }
+
+        // Ответы /api/saves/{slot}: GET { slot, data, version, updatedAt }, PUT { slot, version, updatedAt,
+        // rawSize, storedSize }, 409 { code, serverVersion, serverUpdatedAt }.
+        [Serializable]
+        private sealed class SaveDto
+        {
+            public string slot;
+            public string data;
+            public long version;
+            public string updatedAt;
+            public int storedSize;
+            public long serverVersion;
         }
 #pragma warning restore CS0649
     }
