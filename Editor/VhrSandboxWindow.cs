@@ -9,8 +9,8 @@ namespace VhrGames.Sdk.Editor
 {
     /// <summary>
     /// Окно <c>VHR → Тестирование в Editor</c>: песочный ключ, режим SDK в Unity
-    /// Editor (Simulation / Live-песочница), проверка ключа и всех API на настоящем
-    /// сервере, сброс тестовых данных.
+    /// Editor (Simulation / Live-песочница), симуляция доступа к премиум-игре (SDK 1.13.0+),
+    /// проверка ключа и всех API на настоящем сервере, сброс тестовых данных.
     /// </summary>
     /// <remarks>
     /// Ключ хранится только в <c>EditorPrefs</c> этого компьютера под именем,
@@ -43,6 +43,9 @@ namespace VhrGames.Sdk.Editor
 
         // Тестовый слот облачных сохранений для «Проверить все API» (создаётся и удаляется).
         private const string SelfTestSlot = "vhr_sdk_selftest";
+
+        // Симуляция доступа (порядок = VhrEditorSandbox.SimAccessMode).
+        private static readonly string[] AccessLabels = { "Regular", "Premium Full", "Premium Demo", "Premium None" };
 
         // Локальные сохранения Simulation: статистика с кешем (файлы не читаем на каждый OnGUI).
         private int _simSlots;
@@ -81,6 +84,8 @@ namespace VhrGames.Sdk.Editor
 
             DrawMode();
             EditorGUILayout.Space(8);
+            DrawAccess();
+            EditorGUILayout.Space(8);
             DrawKey();
             EditorGUILayout.Space(8);
             DrawChecks();
@@ -92,7 +97,8 @@ namespace VhrGames.Sdk.Editor
                 EditorGUILayout.Space(6);
                 EditorGUILayout.HelpBox(
                     "Идёт Play Mode: режим, ключ и сервер применяются при инициализации SDK — перезапустите Play, " +
-                    "чтобы изменения вступили в силу.", MessageType.Warning);
+                    "чтобы изменения вступили в силу. Доступ к премиум-игре меняется сразу (игра получит AccessChanged).",
+                    MessageType.Warning);
             }
 
             EditorGUILayout.Space(8);
@@ -125,6 +131,62 @@ namespace VhrGames.Sdk.Editor
 
             EditorGUILayout.LabelField(
                 "Режим берётся отсюда, если в коде VhrSdkOptions.EditorMode = Auto (по умолчанию). В сборках режим не используется.",
+                EditorStyles.wordWrappedMiniLabel);
+        }
+
+        // ------------------------------------------- доступ (премиум-игра)
+
+        private void DrawAccess()
+        {
+            EditorGUILayout.LabelField("Премиум-игра: доступ игрока (симуляция)", EditorStyles.boldLabel);
+            var current = (int)VhrEditorSandbox.SimAccess;
+            var picked = GUILayout.Toolbar(current, AccessLabels);
+            if (picked != current)
+                VhrEditorSandbox.SimAccess = (VhrEditorSandbox.SimAccessMode)picked;
+
+            var mode = VhrEditorSandbox.SimAccess;
+            using (new EditorGUI.DisabledScope(mode == VhrEditorSandbox.SimAccessMode.Regular))
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUI.BeginChangeCheck();
+                var price = EditorGUILayout.DelayedIntField(
+                    new GUIContent("Цена, монет", "Цена полной версии в симуляции (1 монета = 1 ₽). На платформе цену ставит администратор."),
+                    VhrEditorSandbox.SimPriceCoins);
+                if (EditorGUI.EndChangeCheck()) VhrEditorSandbox.SimPriceCoins = price;
+
+                EditorGUI.BeginChangeCheck();
+                var inSub = EditorGUILayout.ToggleLeft(
+                    new GUIContent("Входит в подписку Premium", "Тогда в окне покупки есть «Оформить Premium»."),
+                    VhrEditorSandbox.SimInSubscription);
+                if (EditorGUI.EndChangeCheck()) VhrEditorSandbox.SimInSubscription = inSub;
+            }
+
+            var canBuy = mode == VhrEditorSandbox.SimAccessMode.PremiumDemo || mode == VhrEditorSandbox.SimAccessMode.PremiumNone;
+            using (new EditorGUILayout.HorizontalScope())
+            using (new EditorGUI.DisabledScope(!canBuy))
+            {
+                if (GUILayout.Button(new GUIContent("Симулировать покупку",
+                        "Полный доступ (покупка) — игра получит AccessChanged, как после окна покупки на сайте.")))
+                    VhrEditorSandbox.SimulateAccessPurchase(subscription: false);
+                using (new EditorGUI.DisabledScope(!VhrEditorSandbox.SimInSubscription))
+                {
+                    if (GUILayout.Button(new GUIContent("Симулировать подписку Premium",
+                            "Полный доступ по подписке — игра получит AccessChanged.")))
+                        VhrEditorSandbox.SimulateAccessPurchase(subscription: true);
+                }
+            }
+
+            EditorGUILayout.LabelField("Сейчас: " + VhrEditorSandbox.DescribeSimAccess() +
+                                       (mode == VhrEditorSandbox.SimAccessMode.PremiumNone
+                                           ? ". На сайте игра без доступа не запустится — платформа сразу предложит покупку; здесь — для проверки ветки кода."
+                                           : "."),
+                EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.LabelField(
+                "В Editor доступ всегда симулируется (и в Simulation, и в Live): его отдают VhrSdk.Access.GetAsync / Current, " +
+                "а переключатель и кнопки во время Play присылают AccessChanged. В премиум-игре реклама → Unavailable, " +
+                "в демо товары каталога → Forbidden (demo_access). Что сервер отвечает тестовому игроку, показывает " +
+                "«Проверить все API». Настоящий премиум-статус ставит только администратор платформы — заявка в кабинете " +
+                "разработчика (игра → Премиум).",
                 EditorStyles.wordWrappedMiniLabel);
         }
 
@@ -375,6 +437,7 @@ namespace VhrGames.Sdk.Editor
             Add("Друзья", games + "Friends");
             Add("Турниры", games + "Tournaments?status=active");
             Add("Серверы: привязки", api + "/servers/api/bindings?gameId=" + gid);
+            Add("Доступ к игре (премиум)", games + "Games/" + gid + "/access");
             Add("Сохранения: список", bridge + "saves");
             RunSavesSmoke(info);
         }

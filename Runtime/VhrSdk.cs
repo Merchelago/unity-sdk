@@ -9,7 +9,7 @@ namespace VhrGames.Sdk
     /// <summary>
     /// Static facade / quick-start entry point for games that do <b>not</b> use
     /// VContainer. Call <see cref="InitializeAsync"/> once at boot, then use
-    /// <see cref="Economy"/>, <see cref="Leaderboard"/>, <see cref="Servers"/>
+    /// <see cref="Economy"/>, <see cref="Leaderboard"/>, <see cref="Access"/>, <see cref="Servers"/>
     /// and <see cref="Session"/>.
     /// </summary>
     /// <remarks>
@@ -20,7 +20,7 @@ namespace VhrGames.Sdk
     public static class VhrSdk
     {
         /// <summary>SDK semantic version. Mirrored into the build marker and sent as <c>X-Vhr-Sdk-Version</c>.</summary>
-        public const string SdkVersion = "1.12.0";
+        public const string SdkVersion = "1.13.0";
 
         private static VhrSession _session;
         private static VhrSdkOptions _options;
@@ -109,6 +109,20 @@ namespace VhrGames.Sdk
         /// VhrSdk.Connection.OnlineChanged += online => offlineIcon.SetActive(!online);
         /// </code></example>
         public static IVhrConnection Connection { get; private set; }
+
+        /// <summary>
+        /// Доступ к игре (SDK 1.13.0+): обычная или премиум-игра, полный доступ / демо / нет доступа
+        /// (<see cref="IVhrAccess.GetAsync"/>, <see cref="IVhrAccess.Current"/>), смена доступа без
+        /// перезапуска (<see cref="IVhrAccess.AccessChanged"/>) и окно платформы «Купить полную версию»
+        /// (<see cref="IVhrAccess.OpenPurchaseAsync"/>). Тот же экземпляр, что внедряет
+        /// <see cref="VhrSdkLifetimeScope"/>. Null until initialized.
+        /// </summary>
+        /// <example><code>
+        /// VhrSdk.Access.AccessChanged += a => lockedContent.SetActive(!a.IsFull);
+        /// var access = await VhrSdk.Access.GetAsync();
+        /// if (access.IsDemo) ShowDemoLimit();
+        /// </code></example>
+        public static IVhrAccess Access { get; private set; }
 
         /// <summary>Session / connection-state holder. Null until initialized.</summary>
         public static IVhrSession Session => _session;
@@ -209,6 +223,10 @@ namespace VhrGames.Sdk
             // Очередь отложенных операций — до сервисов: читает файл с прошлых запусков и начинает
             // отправку, как только будут связь и токен игрока. Общий экземпляр (тот же, что в DI).
             Connection = VhrOutbox.GetOrCreate(api, options, log);
+
+            // Доступ к игре (премиум / демо) — до экономики и рекламы: они смотрят на его состояние.
+            // Общий экземпляр: сразу слушает vhr:access:changed от страницы платформы.
+            Access = VhrAccessService.GetOrCreate(api, options, log);
 
             Economy = new VhrEconomyService(api, options, log);
             // Профиль — до лидерборда: GetTopAsync резолвит ники через него (один экземпляр).
@@ -313,6 +331,8 @@ namespace VhrGames.Sdk
             Saves = null;
             VhrOutbox.ResetShared();
             Connection = null;
+            VhrAccessService.ResetShared();
+            Access = null;
             _initTask = null;
             IsInitialized = false;
         }

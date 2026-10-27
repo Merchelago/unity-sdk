@@ -3,6 +3,55 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/). Как выпускаются версии — [RELEASING.md](RELEASING.md).
 
+## [1.13.0] - 2026-10-27
+
+### Добавлено — премиум-игры (`VhrSdk.Access`)
+- **`IVhrAccess`** (`VhrSdk.Access`, внедрение через `VhrSdkLifetimeScope`; один общий экземпляр) — доступ игрока
+  к игре: обычная или премиум, полный доступ, демо или нет доступа. Премиум-статус ставит только администратор
+  платформы (заявка — в кабинете разработчика); пока его нет, игра обычная. **Одна сборка работает в обоих
+  режимах**, пересобирать игру после одобрения не нужно.
+- **`GetAsync(ct)` → `VhrAccessState`** — с сервера (`GET {GamesBaseUrl}/api/Games/{id}/access` игровым токеном).
+  Если сервер недоступен или ещё без премиум-игр, SDK берёт ответ страницы платформы (`vhr:access:get`), claims
+  игрового токена (`gtp`/`acc`/`asrc`) или последнее известное состояние. Если не известно ничего, игра
+  считается обычной с полным доступом, как до 1.13. `403 premium_required` с телом состояния — это ответ «нет
+  доступа». Метод не бросает, параллельные вызовы делают один запрос.
+- **`Current`** — последнее известное состояние без запроса (никогда не `null`; источник — `Origin`).
+- **`event AccessChanged`** — доступ изменился без перезапуска игры: страница платформы прислала
+  `vhr:access:changed` (покупка в игре или на сайте, подписка Premium, одобрение родителя, решение
+  администратора). Событие приходит сразу, затем SDK перечитывает сервер: источник правды — сервер, устаревший
+  ответ отбрасывается. Первая загрузка события не вызывает, одно и то же состояние дважды не присылается.
+- **`OpenPurchaseAsync(ct)` → `VhrAccessPurchaseResult { Status, State, IsFull, IsTest, ErrorCode, Message }`** —
+  окно платформы «Купить за N монет» / «Оформить Premium» / для ребёнка «Попросить у родителя». Итог
+  `VhrAccessPurchaseStatus`: `Purchased`, `Subscribed`, `Requested`, `Cancelled` или `Unavailable` (`not_premium`,
+  `already_full`, `not_hosted`, `host_unsupported`, `busy`, `host_timeout`…). Отмена `ct` прекращает только
+  ожидание: если игрок всё же купит, придёт `AccessChanged`.
+- **`VhrAccessState`**: `GameType` (`Regular`/`Premium`), `Access` (`Full`/`Demo`/`None`), `Source`
+  (`Free`/`Purchase`/`Subscription`/`Grandfather`/`Demo`/`None`), `PriceCoins` (`int?`), `InSubscription`,
+  `HasDemo`, `IsPremium`, `IsFull`, `IsDemo`, `CanPurchase`, `Origin` (`Server`/`Host`/`Token`/`Simulation`/`Default`),
+  `SameAs`, `Clone`, `Regular()`.
+- **Протокол с сайтом** (аддитивно): `vhr:access:get` → `vhr:access:state`; `vhr:access:changed`;
+  `vhr:access:purchase` → `vhr:access:purchase-result`. Новый плагин `Runtime/Plugins/WebGL/VhrAccessBridge.jslib`:
+  ответы только от `window.parent` с origin платформы, ровно один ответ на запрос (таймаут `get` — 3 с, окна
+  покупки — 15 мин) и сторож C# по реальному времени.
+- **Editor:** окно «VHR → Тестирование в Editor» → «Премиум-игра: доступ игрока» — Regular / Premium Full /
+  Premium Demo / Premium None, цена, «входит в подписку». Кнопки «Симулировать покупку» и «Симулировать подписку
+  Premium» присылают `AccessChanged` в запущенную игру. `OpenPurchaseAsync` в Editor показывает диалог-имитацию
+  окна платформы. «Проверить все API» — строка «Доступ к игре (премиум)».
+
+### Изменено
+- **Реклама в премиум-игре не показывается никогда** — ни в полном доступе, ни в демо. `VhrSdk.Ads.IsSupported =
+  false`, а `ShowInterstitialAsync`/`ShowRewardedAsync` сразу возвращают `Unavailable` (`Reason = "premium_game"`)
+  без запроса к сайту и без `OnAdOpened`. В обычной игре реклама работает как раньше.
+- **Товары каталога продаются только при полном доступе.** В демо-версии премиум-игры `Economy.PurchaseAsync`
+  сразу, без запроса, возвращает `Forbidden` с кодом `demo_access` (сервер тоже откажет). Отказ сервера
+  (`403 premium_required` от моста) даёт тот же статус и код `demo_access`, а
+  `IsPurchaseAvailable` становится `false`. В обычной игре и при полном доступе ничего не меняется.
+- Разбор игрового токена читает claims доступа `gtp`, `acc`, `asrc` — только как подсказку до ответа сервера.
+
+### Совместимость
+- Старые сборки (SDK < 1.13.0) в премиум-игре работают с полным доступом, а без доступа не запускаются. Про демо
+  они не знают: демо-ограничения делает только сборка с SDK 1.13.0+.
+
 ## [1.12.0] - 2026-10-25
 
 ### Добавлено — несколько таблиц лидеров на игру (`VhrSdk.Leaderboard`)
@@ -706,6 +755,7 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
+[1.13.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.13.0
 [1.12.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.12.0
 [1.11.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.11.0
 [1.10.1]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.10.1

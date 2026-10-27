@@ -31,6 +31,13 @@ namespace VhrGames.Sdk
     /// Покупки идемпотентны по <c>externalId</c> (GUID, если не передан): повтор с
     /// тем же ключом не спишет монеты дважды.
     /// </para>
+    /// <para>
+    /// <b>Премиум-игры (SDK 1.13.0+).</b> Товары каталога продаются только при полном доступе
+    /// (<see cref="IVhrAccess"/>): в демо-версии <see cref="PurchaseAsync(string, int, CancellationToken)"/>
+    /// сразу, без запроса, возвращает <see cref="VhrPurchaseStatus.Forbidden"/> с кодом
+    /// <c>demo_access</c> (сервер тоже откажет), а <see cref="IsPurchaseAvailable"/> = <c>false</c>.
+    /// Сначала игрок покупает полную версию — <see cref="IVhrAccess.OpenPurchaseAsync"/>.
+    /// </para>
     /// </summary>
     public interface IVhrEconomy
     {
@@ -52,6 +59,7 @@ namespace VhrGames.Sdk
         /// Можно ли сейчас показывать магазин: на WebGL — игра открыта на странице
         /// платформы VHR; в Unity Editor — всегда (Simulation или Live-песочница); в
         /// нативных сборках — <c>false</c> (окна подтверждения платформы там нет).
+        /// SDK 1.13.0+: в демо-версии премиум-игры — <c>false</c> (товары — только при полном доступе).
         /// </summary>
         bool IsPurchaseAvailable { get; }
 
@@ -246,10 +254,28 @@ namespace VhrGames.Sdk
         /// <inheritdoc />
         public bool IsPurchaseAvailable =>
 #if UNITY_EDITOR
-            true;
+            !IsDemoAccess();
 #else
-            VhrWebGlEconomyChannel.IsSupported && VhrWebGlEconomyChannel.IsHosted();
+            VhrWebGlEconomyChannel.IsSupported && VhrWebGlEconomyChannel.IsHosted() && !IsDemoAccess();
 #endif
+
+        // SDK 1.13.0: товары каталога премиум-игры — только при полном доступе (демо / нет доступа — отказ).
+        private bool IsDemoAccess()
+        {
+            try
+            {
+                var a = VhrAccessService.Peek(_options);
+                return a.IsPremium && !a.IsFull;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        internal const string DemoAccessMessage =
+            "Товары каталога продаются только при полном доступе к премиум-игре, а у игрока демо-версия. " +
+            "Предложите купить полную версию: VhrSdk.Access.OpenPurchaseAsync().";
 
         private bool IsSimulation =>
 #if UNITY_EDITOR
@@ -391,6 +417,14 @@ namespace VhrGames.Sdk
             if (quantity < 1)
                 return VhrPurchaseResult.Fail(VhrPurchaseStatus.Error, "bad_request",
                     "quantity должен быть ≥ 1.", itemId, quantity, externalId);
+            if (IsDemoAccess())
+            {
+                // Без намерения на сервере: он тоже откажет (покупки товаров — только при access=full).
+                var demo = VhrPurchaseResult.Fail(VhrPurchaseStatus.Forbidden, "demo_access", DemoAccessMessage,
+                    itemId, quantity, externalId);
+                demo.IsTest = _options.IsEditorSimulation || _options.IsEditorLiveSandbox;
+                return Log(demo);
+            }
             if (_purchaseInFlight)
                 return VhrPurchaseResult.Fail(VhrPurchaseStatus.Error, "busy",
                     "Уже идёт другая покупка — дождитесь её результата.", itemId, quantity, externalId);
@@ -800,6 +834,14 @@ namespace VhrGames.Sdk
                 r.Status = VhrPurchaseStatus.Forbidden;
                 r.ErrorCode = string.IsNullOrEmpty(code) ? "daily_limit" : code;
                 r.Message = "Достигнут дневной лимит покупок игрока.";
+            }
+            else if (http == 403 && (code == "premium_required" || code == "demo_access"))
+            {
+                // Мост отказывает в покупке товара в демо-версии премиум-игры кодом premium_required
+                // (токен: gtp = premium, acc ≠ full). Для игры — тот же код, что у отказа без запроса.
+                r.Status = VhrPurchaseStatus.Forbidden;
+                r.ErrorCode = "demo_access";
+                r.Message = DemoAccessMessage;
             }
             else if (http == 403)
             {

@@ -13,7 +13,8 @@ namespace VhrGames.Sdk
     /// <summary>
     /// <b>Только Unity Editor.</b> Настройки «Тестирования в Editor» (окно
     /// <c>VHR → Тестирование в Editor</c>): песочный ключ, выбранный режим, адрес
-    /// сервера для dev-стенда, плюс состояние локальной симуляции экономики.
+    /// сервера для dev-стенда, симуляция доступа к премиум-игре (SDK 1.13.0+), плюс
+    /// состояние локальной симуляции экономики.
     /// </summary>
     /// <remarks>
     /// Ключ хранится в <see cref="EditorPrefs"/> текущего пользователя этого
@@ -330,6 +331,170 @@ namespace VhrGames.Sdk
         {
             SessionState.EraseString(Prefix + "SimBalance");
             SessionState.EraseString(Prefix + "SimPurchases");
+        }
+
+        // ------------------------------------- симуляция доступа (SDK 1.13.0+)
+
+        /// <summary>Какой доступ симулировать в Editor (<see cref="IVhrAccess"/>).</summary>
+        internal enum SimAccessMode
+        {
+            /// <summary>Обычная игра: полный доступ, реклама есть.</summary>
+            Regular = 0,
+            /// <summary>Премиум-игра, полный доступ (куплена или подписка).</summary>
+            PremiumFull = 1,
+            /// <summary>Премиум-игра, демо-версия.</summary>
+            PremiumDemo = 2,
+            /// <summary>Премиум-игра без демо, не куплена (на сайте игра не запустилась бы).</summary>
+            PremiumNone = 3
+        }
+
+        /// <summary>Цена полной версии в симуляции по умолчанию (монет).</summary>
+        public const int DefaultSimPriceCoins = 199;
+
+        /// <summary>
+        /// Симуляция доступа сменилась (переключатель в окне VHR, «Симулировать покупку», покупка в
+        /// диалоге). Сервис доступа присылает игре <see cref="IVhrAccess.AccessChanged"/>.
+        /// </summary>
+        internal static event Action SimAccessChanged;
+
+        /// <summary>Выбранный в окне VHR доступ (по умолчанию — обычная игра). Хранится в EditorPrefs проекта.</summary>
+        internal static SimAccessMode SimAccess
+        {
+            get
+            {
+                var v = EditorPrefs.GetInt(Prefix + "SimAccess", (int)SimAccessMode.Regular);
+                return Enum.IsDefined(typeof(SimAccessMode), v) ? (SimAccessMode)v : SimAccessMode.Regular;
+            }
+            set
+            {
+                if (value == SimAccess) return;
+                EditorPrefs.SetInt(Prefix + "SimAccess", (int)value);
+                // Источник полного доступа («подписка») помнит только последняя симулированная покупка.
+                SessionState.EraseString(Prefix + "SimAccessSource");
+                RaiseSimAccessChanged();
+            }
+        }
+
+        /// <summary>Цена полной версии в симуляции (монет, 1 монета = 1 ₽).</summary>
+        internal static int SimPriceCoins
+        {
+            get => Math.Max(1, EditorPrefs.GetInt(Prefix + "SimPrice", DefaultSimPriceCoins));
+            set
+            {
+                var v = Math.Max(1, value);
+                if (v == SimPriceCoins) return;
+                EditorPrefs.SetInt(Prefix + "SimPrice", v);
+                if (SimAccess != SimAccessMode.Regular) RaiseSimAccessChanged();
+            }
+        }
+
+        /// <summary>Входит ли игра в подписку Premium в симуляции (тогда в окне покупки есть «Оформить Premium»).</summary>
+        internal static bool SimInSubscription
+        {
+            get => EditorPrefs.GetBool(Prefix + "SimInSubscription", true);
+            set
+            {
+                if (value == SimInSubscription) return;
+                EditorPrefs.SetBool(Prefix + "SimInSubscription", value);
+                if (SimAccess != SimAccessMode.Regular) RaiseSimAccessChanged();
+            }
+        }
+
+        /// <summary>
+        /// «Симулировать покупку»: полный доступ (покупка или подписка) + <see cref="IVhrAccess.AccessChanged"/>
+        /// в запущенной игре — как после окна покупки на сайте.
+        /// </summary>
+        internal static void SimulateAccessPurchase(bool subscription)
+        {
+            SessionState.SetString(Prefix + "SimAccessSource", subscription ? "subscription" : "purchase");
+            if (SimAccess != SimAccessMode.PremiumFull)
+            {
+                EditorPrefs.SetInt(Prefix + "SimAccess", (int)SimAccessMode.PremiumFull);
+            }
+            RaiseSimAccessChanged();
+        }
+
+        private static void RaiseSimAccessChanged()
+        {
+            try { SimAccessChanged?.Invoke(); }
+            catch (Exception e) { Debug.LogError("[VHR SDK] Access: обработчик симуляции доступа упал: " + e); }
+        }
+
+        /// <summary>Состояние доступа по настройкам симуляции (<see cref="VhrAccessOrigin.Simulation"/>).</summary>
+        internal static VhrAccessState BuildSimAccessState()
+        {
+            var mode = SimAccess;
+            if (mode == SimAccessMode.Regular) return VhrAccessState.Regular(VhrAccessOrigin.Simulation);
+
+            var st = new VhrAccessState
+            {
+                GameType = VhrGameType.Premium,
+                PriceCoins = SimPriceCoins,
+                InSubscription = SimInSubscription,
+                Origin = VhrAccessOrigin.Simulation
+            };
+            switch (mode)
+            {
+                case SimAccessMode.PremiumFull:
+                    st.Access = VhrAccessLevel.Full;
+                    st.Source = SessionState.GetString(Prefix + "SimAccessSource", string.Empty) == "subscription" && st.InSubscription
+                        ? VhrAccessSource.Subscription
+                        : VhrAccessSource.Purchase;
+                    st.HasDemo = true;
+                    break;
+                case SimAccessMode.PremiumDemo:
+                    st.Access = VhrAccessLevel.Demo;
+                    st.Source = VhrAccessSource.Demo;
+                    st.HasDemo = true;
+                    break;
+                default:
+                    st.Access = VhrAccessLevel.None;
+                    st.Source = VhrAccessSource.None;
+                    st.HasDemo = false;
+                    break;
+            }
+            return st;
+        }
+
+        /// <summary>Короткое описание симуляции для логов и окна VHR.</summary>
+        internal static string DescribeSimAccess()
+        {
+            var st = BuildSimAccessState();
+            switch (SimAccess)
+            {
+                case SimAccessMode.PremiumFull:
+                    return $"Premium Full ({(st.Source == VhrAccessSource.Subscription ? "подписка" : "покупка")}, цена {st.PriceCoins})";
+                case SimAccessMode.PremiumDemo:
+                    return $"Premium Demo (цена полной версии {st.PriceCoins}{(st.InSubscription ? ", входит в подписку" : "")})";
+                case SimAccessMode.PremiumNone:
+                    return $"Premium None (без демо, цена {st.PriceCoins})";
+                default:
+                    return "Regular (обычная игра)";
+            }
+        }
+
+        /// <summary>
+        /// Диалог-имитация окна покупки полной версии на сайте. 0 — «Отмена», 1 — «Купить за N
+        /// монет», 2 — «Оформить Premium» (если игра входит в подписку).
+        /// </summary>
+        internal static int ShowAccessPurchaseDialog(VhrAccessState st)
+        {
+            var price = st.PriceCoins ?? SimPriceCoins;
+            var message =
+                "Полная версия игры\n" +
+                $"Цена: {price} монет (= {price} ₽ на платформе)\n" +
+                (st.InSubscription ? "Игра входит в подписку Premium.\n" : string.Empty) +
+                $"Сейчас: {(st.IsDemo ? "демо-версия" : "нет доступа")}.\n\n" +
+                "Режим: симуляция в Editor — монеты не тратятся, сервер не вызывается.\n" +
+                "Это имитация окна платформы: на vhrgames.ru его показывает сайт (для детского аккаунта — " +
+                "«Попросить у родителя», итог Requested).";
+            const string title = "VHR — купить полную версию";
+            if (st.InSubscription)
+            {
+                var c = EditorUtility.DisplayDialogComplex(title, message, $"Купить за {price}", "Отмена", "Оформить Premium");
+                return c == 0 ? 1 : c == 2 ? 2 : 0;
+            }
+            return EditorUtility.DisplayDialog(title, message, $"Купить за {price}", "Отмена") ? 1 : 0;
         }
 
         // ---------------------------------------- имитация окна платформы

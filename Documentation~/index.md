@@ -14,6 +14,7 @@
 - [5. Инициализация и состояние подключения](#5-инициализация-и-состояние-подключения)
 - [6. Справочник API](#6-справочник-api)
   - [6.9 Работа без связи (`IVhrConnection`, SDK 1.12.0+)](#69-ivhrconnection--работа-без-связи-sdk-1120)
+  - [6.10 Доступ к премиум-игре (`IVhrAccess`, SDK 1.13.0+)](#610-ivhraccess--доступ-к-премиум-игре-sdk-1130)
 - [7. Модель идемпотентности](#7-модель-идемпотентности)
 - [8. Траблшутинг](#8-траблшутинг)
 
@@ -267,6 +268,10 @@ public static class VhrCatalogIds
 | **Simulation** | Локально: баланс 10 000 (`SessionState`), диалог подтверждения, цены `SimulatedItemPrices` / `SimulatedDefaultItemPrice`, «инвентарь» сеанса | Облачные сохранения — локально (`Library/VhrSdk/SimSaves`, лимиты сервера, см. [6.8](#68-ivhrsaves--облачные-сохранения-sdk-1110)); остальные — как в 1.8 (HTTP с вашим `TokenProvider`) | Симуляция |
 | **LiveSandbox** | Настоящий мост: намерение → диалог → `purchase-intents/{id}/confirm` | Настоящий сервер: Saves, Achievements, Friends, GameSessions, Leaderboard, PlayerStats, Profile (`/api/Auth/me` → «Тестовый игрок», `isSandbox`), Tournaments, Servers, Lobby/Relay | Симуляция (доход не репортится) |
 
+**Доступ к премиум-игре (SDK 1.13.0+)** в Editor симулируется в обоих режимах: окно → «Премиум-игра: доступ
+игрока» (Regular / Premium Full / Premium Demo / Premium None, цена, «входит в подписку», «Симулировать
+покупку» → `AccessChanged`), см. [6.10](#610-ivhraccess--доступ-к-премиум-игре-sdk-1130).
+
 В LiveSandbox `Validate()` подставляет `TokenProvider = () => <песочный ключ>`
 (`Authorization: Bearer`) и `GameId = gid` ключа (подпись не проверяется — это делает
 сервер). Ключ должен быть песочным (`sbx = "1"`), игровым (`aud …#game`), с `gid` и не
@@ -372,6 +377,11 @@ VhrSdk.ConnectionState.Subscribe(state => { /* Connecting/Connected/Faulted */ }
 Тело `POST /api/purchase`: `{ userId, itemId, quantity, externalId, gameId }` (заголовки
 `X-Vhr-Game-Id`, `X-Vhr-Sdk-Version: 1.9.0`, `Authorization: Bearer <игровой токен>`).
 
+**Премиум-игра (SDK 1.13.0+):** при `VhrSdk.Access.Current` = премиум без полного доступа (демо) `PurchaseAsync`
+сразу, без запроса, возвращает `Forbidden` / `demo_access`, а `IsPurchaseAvailable = false`. Отказ сервера
+(мост: `403 premium_required` — токен демо-версии) — тоже `Forbidden` с кодом `demo_access` и тем же пояснением.
+См. [6.10](#610-ivhraccess--доступ-к-премиум-игре-sdk-1130).
+
 ### 6.2 `IVhrLeaderboard` — таблицы лидеров (несколько на игру с SDK 1.12.0)
 
 Доступ: `VhrSdk.Leaderboard` или внедрение `IVhrLeaderboard` (VContainer). Базовый URL — `GamesBaseUrl`
@@ -457,6 +467,7 @@ board }` (`improved`/`best`/`rank` неизвестны). Устаревший `
 `InitializeAsync`, `IsInitialized`, `Economy`, `Ads`, `Saves`, `Leaderboard`, `Servers`,
 `Achievements`, `Profile`, `Friends`, `PlayerStats`, `GameSessions`, `Tournaments`,
 `Connection` (1.12.0+, [6.9](#69-ivhrconnection--работа-без-связи-sdk-1120)),
+`Access` (1.13.0+, [6.10](#610-ivhraccess--доступ-к-премиум-игре-sdk-1130)),
 `Relay`, `Lobby`, `Session`, `ConnectionState`, `SdkVersion`, `ResetForTests()`.
 
 ### 6.6 Транспортный seam
@@ -497,6 +508,11 @@ board }` (`improved`/`best`/`rank` неизвестны). Устаревший `
 от рекламы в его игре, доступен к выводу после закрытия отчётного периода). Таймауты:
 нет ответа хоста 5 с → `Unavailable`; показ дольше 5 мин → `Closed`. Вне хоста VHR —
 `Unavailable`; в редакторе/не-WebGL — симуляция (`AdsSimulation`, `AdsSimulationDelaySeconds`).
+
+**Премиум-игра (SDK 1.13.0+):** при `VhrSdk.Access.Current.IsPremium` (любой доступ — полный или демо)
+`IsSupported = false`, а `Show*` сразу возвращают `Unavailable` с `Reason = "premium_game"` — без `postMessage`,
+без `OnAdOpened`/`OnAdClosed`. Сервер со своей стороны отдаёт `/api/Ads/config` премиум-игры с `enabled = false` и не
+засчитывает её показы.
 
 > Награда за rewarded — **только внутриигровая**. Платформенные монеты за рекламу не
 > начисляются. `IVhrEconomy.ReportAdAsync` устарел (`[Obsolete]`): доход по нему больше не
@@ -691,6 +707,119 @@ tournamentId }`. Сервер принимает результат только
 операции тестового игрока `sbx_*` (его ключом). Simulation-сохранения локальных pending/cache-файлов не пишут
 («облако» и так на диске).
 
+### 6.10 `IVhrAccess` — доступ к премиум-игре (SDK 1.13.0+)
+
+Доступ: `VhrSdk.Access` или внедрение `IVhrAccess` (VContainer) — один общий экземпляр (его же читают
+`IVhrAds` и `IVhrEconomy`).
+
+**Модель.** Премиум-статус ставит **только администратор** при модерации. Разработчик подаёт заявку в кабинете:
+`POST {Games}/api/Developer/games/{id}/premium-request { priceCoins, inSubscription, hasDemo, comment }` (цена
+49–4999 монет). Пока заявку не одобрили, игра обычная. Сервер — единственный источник правды:
+
+| `gameType` | `access` | `source` | Когда |
+|---|---|---|---|
+| `regular` | `full` | `free` | Обычная игра |
+| `premium` | `full` | `purchase` | Игрок владеет игрой: купил сам или её подарил родитель |
+| `premium` | `full` | `grandfather` | Игрок покупал в игре до её перевода в премиум |
+| `premium` | `full` | `subscription` | У игрока Premium (свой или родителя), игра входит в подписку |
+| `premium` | `full` | `free` | Команда игры (автор, участники студии), модератор платформы, тестовый игрок `sbx_*` песочного ключа |
+| `premium` | `demo` | `demo` | Игрок не владеет игрой, у неё есть демо |
+| `premium` | `none` | `none` | Игрок не владеет игрой, демо нет: `/play` и выдача игрового токена отвечают `403 premium_required`, игра не запускается |
+
+| Член | Описание |
+|---|---|
+| `Task<VhrAccessState> GetAsync(ct)` | `GET {GamesBaseUrl}/api/Games/{gid}/access` с игровым токеном → `Origin = Server`. Если не удалось (нет связи, `404` старого сервера, 5xx), SDK пробует дальше по цепочке: `vhr:access:get` к странице (ждёт 3 с, `Host`) → claims игрового токена `gtp`/`acc`/`asrc` (`Token`) → последнее известное → `Regular`/`Full` (`Default`, как до 1.13). `403` с телом состояния (`premium_required`) — это ответ «нет доступа». Параллельные вызовы делают один запрос. Не бросает, кроме `OperationCanceledException` |
+| `VhrAccessState Current` | Последнее известное состояние без запроса, никогда не `null`. Каждый раз — копия |
+| `event Action<VhrAccessState> AccessChanged` | Доступ изменился (см. ниже). Приходит на главном потоке; упавший обработчик пишется в лог и не мешает остальным |
+| `Task<VhrAccessPurchaseResult> OpenPurchaseAsync(ct)` | Окно покупки на сайте (см. ниже). Одновременно — одно окно |
+
+`VhrAccessState` (свойства): `GameType` (`Regular`=0, `Premium`=1), `Access` (`VhrAccessLevel`: `Full`=0,
+`Demo`=1, `None`=2), `Source` (`VhrAccessSource`: `Free`, `Purchase`, `Subscription`, `Grandfather`, `Demo`,
+`None`), `int? PriceCoins`, `bool InSubscription`, `bool HasDemo`, `VhrAccessOrigin Origin` (`Default`,
+`Server`, `Host`, `Token`, `Simulation`); вычисляемые `IsPremium`, `IsFull`, `IsDemo`, `CanPurchase`
+(= премиум и не полный доступ); `SameAs(other)` (без `Origin`), `Clone()`, `static Regular()`.
+
+**Разбор состояния** (сервер, страница, токен) терпим к значениям. У `regular` доступ всегда `full`/`free`. Если
+`gameType` нет, а `access` = `demo`/`none`, игра считается премиум. Неизвестный `access` премиум-игры
+становится `demo` (при `hasDemo`) или `none`. Полный доступ премиум-игры получает источник `purchase`, если
+это не `subscription` и не `grandfather` (сюда попадают `parent_gift`, `admin` и неизвестные значения). Цена
+`≤ 0` или `null` превращается в `PriceCoins = null`. Понимается и `priceCoins`. Состояние может лежать внутри
+обёртки (`{ state: {…} }`).
+
+**Когда приходит `AccessChanged`:**
+- страница прислала `vhr:access:changed` (покупка в игре или на сайте, подписка, одобрение родителя, решение
+  администратора). Событие приходит сразу (`Host`), после чего SDK перечитывает сервер. Если сервер говорит
+  иначе, придёт второе событие — с правдой сервера;
+- итог окна покупки принёс новое состояние;
+- `GetAsync` вернул состояние, отличное от уже подтверждённого сервером или страницей. Первая загрузка
+  событие не вызывает;
+- в Editor — переключатель и кнопки в окне VHR.
+
+Ответ сервера на запрос, начатый до новости о доступе, отбрасывается, и SDK спрашивает заново — без
+«мигания» демо ↔ полный. Одно и то же состояние дважды подряд не присылается. Хост перевыпускает игровой токен
+при смене доступа. Если claims нового токена говорят о другом `GameType`/`Access`, чем последнее известное
+состояние, `Current` до ответа сервера берёт данные из токена (`Origin = Token`, цена и флаги — из прошлого
+состояния).
+
+**`OpenPurchaseAsync`.** Если игра открыта не во фрейме vhrgames.ru, сразу `Unavailable`/`not_hosted`. Иначе
+SDK по шагам:
+1. Спрашивает у страницы свежее состояние (`vhr:access:get`, 3 с). Если ответа нет, это
+   `host_unsupported` (старая версия сайта). Для обычной игры — `not_premium`, если доступ уже полный —
+   `already_full`; окно в этих случаях не открывается.
+2. Отправляет `vhr:access:purchase`. Сайт показывает «Купить за N монет», «Оформить Premium» (если игра в
+   подписке), для ребёнка — «Попросить у родителя».
+3. Получает `vhr:access:purchase-result`. Если пришло новое `state`, SDK применяет его (`AccessChanged`) и
+   перечитывает сервер в фоне. Если `Purchased`/`Subscribed` пришли без `state`, SDK спрашивает сервер и
+   возвращает его ответ.
+
+Страховочный таймаут окна — 15 мин (JS) и сторож C# по реальному времени. Отмена `ct` прекращает только
+ожидание. Если игрок всё же купит, придёт `AccessChanged`.
+
+| `VhrAccessPurchaseStatus` | Значение |
+|---|---|
+| `Unavailable` (0) | Окно не открылось или покупка невозможна. Код в `ErrorCode`: `not_premium`, `already_full`, `not_hosted`, `host_unsupported`, `busy`, `host_timeout`, `post_failed`, `disposed`, `exception` или код/причина от сайта |
+| `Purchased` (1) | Игра куплена за монеты — `State.IsFull` |
+| `Subscribed` (2) | Оформлена подписка Premium — `State.IsFull` |
+| `Requested` (3) | Детский аккаунт: запрос родителю отправлен, доступ пока прежний |
+| `Cancelled` (4) | Игрок закрыл окно |
+
+`VhrAccessPurchaseResult`: `Status`, `State` (никогда не `null`), `IsFull`, `IsTest` (Editor), `ErrorCode`, `Message`.
+
+**Протокол `postMessage`** (`Runtime/Plugins/WebGL/VhrAccessBridge.jslib`; аддитивно, старые `vhr:*` без изменений):
+
+```
+игра → сайт: { type: 'vhr:access:get', requestId }
+сайт → игра: { type: 'vhr:access:state', requestId, state }
+сайт → игра: { type: 'vhr:access:changed', state }                         // без запроса, при смене доступа
+игра → сайт: { type: 'vhr:access:purchase', requestId }
+сайт → игра: { type: 'vhr:access:purchase-result', requestId,
+               result: 'purchased'|'subscribed'|'requested'|'cancelled'|'unavailable', state, error? }
+state = { gameType: 'regular'|'premium', access: 'full'|'demo'|'none',
+          source: 'free'|'purchase'|'subscription'|'grandfather'|'demo'|'none',
+          price: int|null, inSubscription: bool, hasDemo: bool }
+```
+
+Запросы игры уходят с `targetOrigin '*'` (секретов в них нет). Ответы принимаются только от `window.parent` с
+origin платформы (тот же `vhrSdkBridge.isAllowedOrigin`, что у токена, рекламы и покупок), ответ на чужой или уже
+завершённый `requestId` игнорируется, как и ответ не того типа. На каждый запрос C# получает ровно один ответ, и
+никогда синхронно: от сайта, по таймауту JS (`get` — 3 с, `purchase` — 15 мин), с `busy` при дубликате
+`requestId` или с `post_failed`. В C# состояние приходит нормализованным: строки в нижнем регистре, цена — целое
+`> 0` или «нет». Платформенный JWT игра не получает никогда.
+
+**Связь с другими сервисами.** Реклама: в премиум-игре её нет ([6.7](#67-ivhrads--реклама-sdk-180)).
+Экономика: товары продаются только при полном доступе ([6.1](#61-ivhreconomy)). Сохранения, таблицы и достижения
+в демо работают без изменений: SDK-эндпоинты демо не режут, контент ограничивает игра.
+
+**Editor.** Доступ симулируется в обоих режимах (Simulation и Live) переключателем
+`VHR → Тестирование в Editor` → «Премиум-игра: доступ игрока». Состояние хранится в `EditorPrefs` проекта, цена и
+«входит в подписку» — там же. `GetAsync` отвечает через кадр (`Origin = Simulation`). `OpenPurchaseAsync` показывает
+диалог «Купить за N» / «Оформить Premium» / «Отмена»: покупка переключает симуляцию на Premium Full и присылает
+`AccessChanged`. «Симулировать покупку» и «Симулировать подписку Premium» делают то же во время Play. «Проверить все
+API» запрашивает `GET {Games}/api/Games/{gid}/access` с песочным ключом.
+
+**Старые сборки** (SDK < 1.13.0) в премиум-игре работают с полным доступом, если он у игрока есть, а без доступа не
+запускаются. Демо-ограничения делает только сборка с SDK 1.13.0+.
+
 ## 7. Модель идемпотентности
 
 Каждая покупка шлёт `externalId`. Если его не передать — SDK
@@ -721,6 +850,10 @@ tournamentId }`. Сервер принимает результат только
 | Ачивка записалась, а монет не прибавилось | Монетная награда `grant/achievement` из игры форсится в 0 | Ожидаемо: игры не начисляют монеты |
 | `not_implemented` не брошен, но нет данных | Seam серверов 501 / лидерборд вернул пустой массив | Ожидаемо, пока бэкенд не поставлен; гейтите UI серверов по `status=="noop"` |
 | Реклама всегда `Unavailable` на WebGL | Игра открыта не со страницы vhrgames.ru, реклама выключена платформой, детский аккаунт, адблок или нет объявления | Проверяйте на vhrgames.ru; это нормальный исход — продолжайте игру / прячьте кнопку |
+| Реклама всегда `Unavailable`, `Reason = "premium_game"` | Игра премиум (SDK 1.13.0+): в премиум-играх рекламы нет ни в полном доступе, ни в демо | Ожидаемо; прячьте рекламные кнопки по `VhrSdk.Ads.IsSupported`. В Editor проверьте переключатель «Премиум-игра: доступ игрока» |
+| Покупка товара → `Forbidden` (`demo_access`) | Демо-версия премиум-игры: товары каталога — только при полном доступе | Предложите полную версию: `VhrSdk.Access.OpenPurchaseAsync()` |
+| `OpenPurchaseAsync` → `Unavailable` (`not_hosted` / `host_unsupported`) | Игра открыта не со страницы vhrgames.ru / страница не ответила на `vhr:access:get` (старая версия сайта) | Проверяйте на vhrgames.ru или в Editor (диалог-имитация) |
+| `VhrSdk.Access.GetAsync()` → `Origin = Default` на сайте | Сервер ещё без премиум-игр (`404` на `/access`), страница не ответила и в токене нет `gtp` | Ожидаемо до выкатки сервера: игра считается обычной с полным доступом |
 | Реклама часто `Cooldown` | Лимиты частоты платформы (interstitial ~ раз в 90 с, rewarded ~ 20/ч) или повторный вызов во время показа | Не вызывайте чаще; предложите rewarded позже |
 | Состояние подключения застряло в `Faulted` | Мост недоступен на init | Не фатально; вызовы ретраятся по требованию. Проверьте сеть/URL |
 | Лидерборд → `bad_board` | Id таблицы не по правилам (`a-z0-9_-`, до 32 символов, первый — буква/цифра) | Исправьте id: `"survival"`, `"level_1"`; SDK отклоняет его до запроса |

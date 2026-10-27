@@ -11,7 +11,7 @@ namespace VhrGames.Sdk
     /// graph. Add this component to a bootstrap GameObject, assign
     /// <see cref="optionsAsset"/> (or override <see cref="BuildOptions"/>), and
     /// resolve <see cref="IVhrEconomy"/> / <see cref="IVhrLeaderboard"/> /
-    /// <see cref="IVhrServers"/> / <see cref="IVhrSession"/> via constructor
+    /// <see cref="IVhrAccess"/> / <see cref="IVhrServers"/> / <see cref="IVhrSession"/> via constructor
     /// injection anywhere in your game.
     /// </summary>
     /// <remarks>
@@ -124,6 +124,11 @@ namespace VhrGames.Sdk
             // VhrSdk.Connection и что используют сервисы): один файл очереди и одни подписки.
             builder.Register<IVhrConnection>(
                 r => VhrOutbox.GetOrCreate(r.Resolve<VhrApiClient>(), r.Resolve<VhrSdkOptions>(), r.Resolve<IVhrLog>()),
+                Lifetime.Singleton);
+            // Доступ к игре (SDK 1.13.0+) — общий экземпляр (тот же, что VhrSdk.Access): реклама и
+            // экономика смотрят на то же состояние, одна подписка на vhr:access:changed.
+            builder.Register<IVhrAccess>(
+                r => VhrAccessService.GetOrCreate(r.Resolve<VhrApiClient>(), r.Resolve<VhrSdkOptions>(), r.Resolve<IVhrLog>()),
                 Lifetime.Singleton);
 
             builder.RegisterEntryPoint<VhrSdkEntryPoint>();

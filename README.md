@@ -78,6 +78,10 @@ SDK сам просит свежий (`vhr:sdk:token-request`) за 5 минут
 | `GrantCoinsAsync` — начисление монет | ⛔ отключено (`grant_disabled`, сервер — `403`) | внутриигровые награды |
 | `GrantAchievementAsync` — факт анлока ачивки | ✅, монетная награда = 0 | — |
 
+> **Премиум-игры (SDK 1.13.0+):** в демо-версии премиум-игры товары каталога не продаются —
+> `PurchaseAsync` сразу возвращает `Forbidden` (`demo_access`). Сначала игрок покупает полную версию —
+> см. [Премиум-игры](#премиум-игры-vhrsdkaccess-sdk-1130).
+
 ---
 
 ## Покупки в играх (SDK 1.9.0+)
@@ -260,6 +264,11 @@ bool boss = mine.Any(u => u.achievement?.code == VhrCatalogIds.Achievements.Firs
 Режим задаётся в окне; из кода — `VhrSdkOptions.EditorMode = VhrEditorMode.Auto | Simulation | LiveSandbox`
 (`Auto` — как в окне). В сборках режим не используется.
 
+**Премиум-игра (SDK 1.13.0+).** В том же окне — «Премиум-игра: доступ игрока»: **Regular / Premium Full /
+Premium Demo / Premium None**, цена и «входит в подписку». «Симулировать покупку» во время Play присылает
+игре `AccessChanged`, как после окна покупки на сайте. Доступ в Editor всегда симулируется (и в Simulation,
+и в Live) — см. [Премиум-игры](#премиум-игры-vhrsdkaccess-sdk-1130).
+
 > 🔒 **Ключ работает только в Unity Editor и никогда не попадает в сборку.** Он хранится в
 > `EditorPrefs` этого компьютера (отдельно для проекта), читается только под `#if UNITY_EDITOR` и не
 > сериализуется ни в сцену, ни в ScriptableObject, ни в ProjectSettings. Перед сборкой SDK проверяет
@@ -324,7 +333,7 @@ UnityNuGet; NuGetForUnity и `.unitypackage` больше не нужны.
 **2. SDK по git URL** — `Package Manager ▸ + ▸ Add package from git URL…`:
 
 ```
-https://github.com/Merchelago/unity-sdk.git#v1.12.0
+https://github.com/Merchelago/unity-sdk.git#v1.13.0
 ```
 
 R3, его ядро и VContainer подтянутся сами как зависимости SDK. Итоговый `Packages/manifest.json`:
@@ -332,7 +341,7 @@ R3, его ядро и VContainer подтянутся сами как зави�
 ```json
 {
   "dependencies": {
-    "ru.vhrgames.sdk": "https://github.com/Merchelago/unity-sdk.git#v1.12.0"
+    "ru.vhrgames.sdk": "https://github.com/Merchelago/unity-sdk.git#v1.13.0"
   },
   "scopedRegistries": [
     { "name": "OpenUPM", "url": "https://package.openupm.com", "scopes": ["com.cysharp", "jp.hadashikick"] },
@@ -538,7 +547,7 @@ public class AdsExample : MonoBehaviour
 |---|---|---|
 | `Rewarded` | Rewarded досмотрен | Выдать свою награду |
 | `Closed` | Реклама показана и закрыта (rewarded — раньше времени) | Продолжить игру; награды нет |
-| `Unavailable` | Реклама выключена, детский аккаунт, адблок, нет объявления, игра не на vhrgames.ru | Продолжить игру / спрятать кнопку |
+| `Unavailable` | Реклама выключена, детский аккаунт, адблок, нет объявления, игра не на vhrgames.ru, премиум-игра (SDK 1.13.0+, `Reason = "premium_game"`) | Продолжить игру / спрятать кнопку |
 | `Cooldown` | Лимит частоты или уже идёт другой показ | Предложить позже |
 | `Error` | Техническая ошибка | Продолжить игру |
 
@@ -1000,6 +1009,153 @@ public class OnlineStatus : MonoBehaviour
 
 ---
 
+## Премиум-игры (`VhrSdk.Access`, SDK 1.13.0+)
+
+Премиум-игра — платная: игрок покупает её за монеты (1 монета = 1 ₽) или играет по подписке
+**Premium**, если игра входит в подписку. Рекламы в премиум-игре нет, а демо-версия может быть.
+
+**Как игра становится премиум.** Только решением **администратора платформы** при модерации.
+Разработчик подаёт заявку в кабинете (игра → «Премиум»): цена (49–4999 монет), «входит в подписку»,
+«есть демо». Окончательные условия ставит администратор. Пока заявку не одобрили, игра обычная:
+бесплатная, с рекламой, без демо-ограничений. **Пересобирать игру после одобрения не нужно**: одна сборка
+работает в обоих режимах, если она проверяет доступ через `VhrSdk.Access`.
+
+| `GameType` | `Access` | `Source` | Когда | Что делает игра |
+|---|---|---|---|---|
+| `Regular` | `Full` | `Free` | Обычная игра (или заявка ещё не одобрена) | Всё открыто, реклама есть |
+| `Premium` | `Full` | `Purchase` / `Subscription` / `Grandfather` | Игрок купил игру (или её подарил родитель), у него подписка Premium (своя или родителя), или он покупал в этой игре до её перевода в премиум | Всё открыто, рекламы нет |
+| `Premium` | `Demo` | `Demo` | Игрок не купил игру, а у неё есть демо-версия | Ограничивает контент и показывает кнопку «Купить полную версию» |
+| `Premium` | `None` | `None` | Игрок не купил игру, а демо-версии нет | На сайте игра не запустится: платформа сразу предложит покупку |
+
+Что ограничить в демо (уровни, время, режимы), решает сама игра. Сервер не выдаёт в демо ничего
+платного: товары каталога продаются только при полном доступе.
+
+### Пример: проверить доступ, ограничить демо, кнопка «Купить полную версию»
+
+```csharp
+using UnityEngine;
+using UnityEngine.UI;
+using VhrGames.Sdk;
+
+public class PremiumGate : MonoBehaviour
+{
+    [SerializeField] private GameObject demoBanner;   // «Демо-версия: доступны 3 уровня»
+    [SerializeField] private Button buyFullButton;    // «Купить полную версию»
+    [SerializeField] private Text buyFullLabel;
+    [SerializeField] private int demoLevels = 3;
+
+    private VhrAccessState _access = VhrAccessState.Regular();
+
+    // Вызвать после VhrSdk.InitializeAsync(...) (или внедрить IVhrAccess через VContainer).
+    public async void Bind()
+    {
+        VhrSdk.Access.AccessChanged += Apply;            // подписка — ДО запроса
+        buyFullButton.onClick.AddListener(OnBuyFull);
+        Apply(await VhrSdk.Access.GetAsync());           // источник правды — сервер
+    }
+
+    private void OnDestroy()
+    {
+        if (VhrSdk.Access != null) VhrSdk.Access.AccessChanged -= Apply;
+    }
+
+    // На старте и каждый раз, когда доступ меняется БЕЗ перезапуска игры: покупка в игре
+    // или на сайте, подписка Premium, одобрение родителя, решение администратора.
+    private void Apply(VhrAccessState access)
+    {
+        _access = access;
+        demoBanner.SetActive(access.IsDemo);
+        buyFullButton.gameObject.SetActive(access.CanPurchase);   // премиум и не полный доступ
+        if (access.PriceCoins.HasValue)
+            buyFullLabel.text = $"Полная версия — {access.PriceCoins} монет";
+    }
+
+    // Демо-ограничение решает игра. У обычной игры IsFull всегда true.
+    public bool IsLevelAvailable(int level) => _access.IsFull || level <= demoLevels;
+
+    public void OnLevelSelected(int level)
+    {
+        if (!IsLevelAvailable(level)) { OnBuyFull(); return; }
+        LoadLevel(level);
+    }
+
+    private async void OnBuyFull()
+    {
+        buyFullButton.interactable = false;
+        var r = await VhrSdk.Access.OpenPurchaseAsync();  // окно платформы, игра его не рисует
+        buyFullButton.interactable = true;
+
+        switch (r.Status)
+        {
+            case VhrAccessPurchaseStatus.Purchased:       // купил за монеты
+            case VhrAccessPurchaseStatus.Subscribed:      // оформил Premium
+                Apply(r.State);                           // полный доступ сразу (AccessChanged тоже придёт)
+                break;
+            case VhrAccessPurchaseStatus.Requested:       // детский аккаунт: запрос родителю
+                Toast("Запрос отправлен родителю");       // одобрит — придёт AccessChanged
+                break;
+            case VhrAccessPurchaseStatus.Cancelled:       // закрыл окно
+                break;
+            default:                                      // Unavailable: r.ErrorCode — для логов
+                Debug.Log("Покупка недоступна: " + r.ErrorCode);
+                break;
+        }
+    }
+
+    private void LoadLevel(int level) { /* ... */ }
+    private static void Toast(string text) => Debug.Log(text);
+}
+```
+
+`Apply` может вызваться дважды с одним состоянием (итог окна и `AccessChanged`) — делайте его идемпотентным.
+
+### Что меняется в премиум-игре
+
+- **Реклама — никогда** (ни в полном доступе, ни в демо): `VhrSdk.Ads.IsSupported = false`, а
+  `ShowInterstitialAsync`/`ShowRewardedAsync` сразу возвращают `Unavailable` (`Reason = "premium_game"`) без
+  запроса к сайту и без `OnAdOpened`. Прячьте рекламные кнопки по `Ads.IsSupported` — тогда одна сборка
+  верна в обоих режимах. Сайт в премиум-игре тоже рекламы не показывает.
+- **Товары каталога — только при полном доступе.** В демо `Economy.PurchaseAsync` сразу возвращает
+  `Forbidden` с кодом `demo_access` (сервер тоже откажет), а `Economy.IsPurchaseAvailable = false`. Каталог
+  (`GetItemsAsync`) и купленное (`GetOwnedItemsAsync`) читаются как обычно.
+- **Сохранения, таблицы лидеров и достижения в демо работают как обычно**: игрок тот же, поэтому прогресс
+  после покупки остаётся.
+- **Окно покупки показывает сайт:** «Купить за N монет», «Оформить Premium» (если игра входит в подписку), а для
+  детского аккаунта — «Попросить у родителя» (итог `Requested`; когда родитель одобрит, придёт
+  `AccessChanged`). Свои окна оплаты в игре запрещены, как и для товаров.
+- **Перезапуск не нужен:** после покупки (в игре или на сайте) страница платформы сообщает игре новый доступ,
+  SDK присылает `AccessChanged` и перечитывает доступ с сервера.
+- **Старые сборки (SDK < 1.13.0)** в премиум-игре: игрок с полным доступом играет как раньше, а без доступа
+  игра не запускается. Про демо старая сборка не знает, поэтому демо-ограничения делает только сборка с
+  SDK 1.13.0+.
+
+| Член `VhrSdk.Access` (`IVhrAccess`) | Что делает |
+|---|---|
+| `GetAsync(ct)` → `VhrAccessState` | Доступ с сервера (`GET {Games}/api/Games/{id}/access`). Если сервер недоступен, SDK берёт ответ страницы платформы, подсказку игрового токена или последнее известное состояние, а если не знает ничего — считает игру обычной с полным доступом. Никогда не бросает (кроме отмены `ct`) |
+| `Current` | Последнее известное состояние без запроса, никогда не `null` (источник — `Origin`) |
+| `event AccessChanged(VhrAccessState)` | Доступ изменился без перезапуска игры. Первая загрузка его не вызывает |
+| `OpenPurchaseAsync(ct)` → `VhrAccessPurchaseResult` | Окно платформы «Купить полную версию»: `Status` (`Purchased` / `Subscribed` / `Requested` / `Cancelled` / `Unavailable`), `State`, `IsFull`, `ErrorCode` (`not_premium`, `already_full`, `not_hosted`, `host_unsupported`, `busy`…) |
+
+`VhrAccessState`: `GameType` (`Regular` / `Premium`), `Access` (`Full` / `Demo` / `None`), `Source` (`Free` /
+`Purchase` / `Subscription` / `Grandfather` / `Demo` / `None`), `PriceCoins` (`int?`), `InSubscription`,
+`HasDemo`, `IsPremium`, `IsFull`, `IsDemo`, `CanPurchase`, `Origin` (`Server` / `Host` / `Token` / `Simulation` /
+`Default`).
+
+**Редактор.** Окно **`VHR → Тестирование в Editor`** → «Премиум-игра: доступ игрока»: Regular / Premium Full /
+Premium Demo / Premium None, цена, «входит в подписку». Кнопки «Симулировать покупку» и «Симулировать подписку
+Premium» во время Play присылают игре `AccessChanged`. `OpenPurchaseAsync` в Editor показывает диалог-имитацию
+окна платформы (монеты не тратятся). Доступ в Editor симулируется всегда — и в Simulation, и в Live; что сервер
+отвечает тестовому игроку, показывает «Проверить все API».
+
+Протокол между игрой и сайтом (для справки, SDK делает всё сам):
+`{ type:'vhr:access:get', requestId }` → `{ type:'vhr:access:state', requestId, state }`;
+`{ type:'vhr:access:changed', state }` (без запроса, при смене доступа);
+`{ type:'vhr:access:purchase', requestId }` →
+`{ type:'vhr:access:purchase-result', requestId, result:'purchased'|'subscribed'|'requested'|'cancelled'|'unavailable', state }`.
+Подробно — [Documentation~/index.md, 6.10](Documentation~/index.md#610-ivhraccess--доступ-к-премиум-игре-sdk-1130).
+
+---
+
 ## Публичный API кратко
 
 | Сервис | Ключевые методы |
@@ -1010,16 +1166,17 @@ public class OnlineStatus : MonoBehaviour
 | `IVhrTournaments` | `ListAsync`, `GetStandingsAsync`, `JoinAsync`, `SubmitAsync(id, score)` → `VhrTournamentScoreResult { bestScore, queued }` (1.12.0+), `SubmitScoreAsync` |
 | `IVhrConnection` | `IsOnline` + `OnlineChanged`, `PendingCount` + `PendingChanged`, `FlushAsync`, `OnDropped` — связь и очередь отложенных операций (1.12.0+) |
 | `IVhrServers` | `BindAsync`, `ListBindingsAsync`, `RequestInstanceAsync` (по умолчанию noop) |
-| `IVhrAds` | `ShowInterstitialAsync`, `ShowRewardedAsync` (+ колбэк-версии) → `VhrAdResult { Status }` · события `OnAdOpened` / `OnAdClosed` · `AutoPause`, `IsSupported`, `IsShowing` |
+| `IVhrAccess` | `GetAsync` → `VhrAccessState { GameType, Access, Source, PriceCoins, InSubscription, HasDemo, IsFull, IsDemo }`, `Current`, событие `AccessChanged`, `OpenPurchaseAsync` → `VhrAccessPurchaseResult { Status, State }` — премиум-игры (1.13.0+) |
+| `IVhrAds` | `ShowInterstitialAsync`, `ShowRewardedAsync` (+ колбэк-версии) → `VhrAdResult { Status }` · события `OnAdOpened` / `OnAdClosed` · `AutoPause`, `IsSupported`, `IsShowing` (в премиум-игре — `Unavailable`) |
 | `IVhrSaves` | `LoadAsync` / `LoadJsonAsync<T>`, `SaveAsync` / `SaveJsonAsync<T>`, `DeleteAsync`, `ListAsync`, автосохранение `QueueSave` / `QueueSaveJson<T>` + `FlushAsync` · события `OnConflict` / `OnAutoSaveResult` · `HasPendingSaves`, `Limits` |
 | `IVhrSession` | `GameId`, `CurrentToken`, `State`, `Observable<VhrConnectionState> StateChanged` |
-| `VhrSdk` (static) | `InitializeAsync`, `Economy`, `Ads`, `Saves`, `Leaderboard`, `Achievements`, `Tournaments`, `Connection`, `Servers`, `Session`, `ConnectionState` |
+| `VhrSdk` (static) | `InitializeAsync`, `Economy`, `Access`, `Ads`, `Saves`, `Leaderboard`, `Achievements`, `Tournaments`, `Connection`, `Servers`, `Session`, `ConnectionState` |
 
 Покупки **идемпотентны** через `externalId` (по умолчанию — новый GUID);
 передайте свой стабильный id, чтобы повтор не купил дважды.
 
 Меню Editor: **`VHR → Тестирование в Editor`** (песочный ключ, Simulation / Live,
-проверка API, сброс), **`VHR → Каталог игры`** (товары и достижения, генерация
+доступ к премиум-игре, проверка API, сброс), **`VHR → Каталог игры`** (товары и достижения, генерация
 `VhrCatalogIds.cs`), **`VHR → Обновление SDK`** (версии, что нового, обновление одной кнопкой),
 `VHR → Собрать серверный билд`.
 

@@ -44,7 +44,9 @@ namespace VhrGames.Sdk
         /// <summary>
         /// Покупка запрещена платформой: родительский контроль (<c>parental_block</c>),
         /// дневной лимит (<c>daily_limit</c>), токен не игровой (<c>game_token_forbidden</c>),
-        /// игра не совпадает с токеном (<c>game_mismatch</c>). Код — в <see cref="VhrPurchaseResult.ErrorCode"/>.
+        /// игра не совпадает с токеном (<c>game_mismatch</c>), демо-версия премиум-игры
+        /// (<c>demo_access</c>, SDK 1.13.0+: товары — только при полном доступе, см. <see cref="IVhrAccess"/>).
+        /// Код — в <see cref="VhrPurchaseResult.ErrorCode"/>.
         /// </summary>
         Forbidden = 6
     }
@@ -163,7 +165,8 @@ namespace VhrGames.Sdk
         /// Машиночитаемый код для логов и ветвления: <c>not_hosted</c>, <c>busy</c>,
         /// <c>daily_limit</c>, <c>parental_block</c>, <c>game_mismatch</c>,
         /// <c>game_token_forbidden</c>, <c>sdk_update_required</c>, <c>unauthorized</c>,
-        /// <c>connection_error</c>, <c>item_unavailable</c>, <c>confirmation_unavailable</c> и т.п.
+        /// <c>connection_error</c>, <c>item_unavailable</c>, <c>confirmation_unavailable</c>,
+        /// <c>demo_access</c> (демо-версия премиум-игры, SDK 1.13.0+) и т.п.
         /// Пусто при успехе.
         /// </summary>
         public string ErrorCode { get; set; }

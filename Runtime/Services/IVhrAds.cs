@@ -40,6 +40,13 @@ namespace VhrGames.Sdk
     /// только один показ; повторный вызов во время показа → <see cref="VhrAdStatus.Cooldown"/>.
     /// </para>
     /// <para>
+    /// <b>Премиум-игры (SDK 1.13.0+).</b> В премиум-игре рекламы нет — ни в полном доступе, ни в
+    /// демо: <see cref="IsSupported"/> = <c>false</c>, а показы сразу возвращают
+    /// <see cref="VhrAdStatus.Unavailable"/> (причина <c>premium_game</c>) без запроса к сайту и без
+    /// <see cref="OnAdOpened"/>. Тип игры SDK берёт из <see cref="IVhrAccess.Current"/>. Одна сборка
+    /// работает в обоих режимах: пока игра обычная, реклама показывается как раньше.
+    /// </para>
+    /// <para>
     /// <b>Редактор и не-WebGL.</b> Реклама симулируется: лог + результат через
     /// <see cref="VhrSdkOptions.AdsSimulationDelaySeconds"/> по режиму
     /// <see cref="VhrSdkOptions.AdsSimulation"/>.
@@ -59,7 +66,8 @@ namespace VhrGames.Sdk
     {
         /// <summary>
         /// Есть ли смысл показывать рекламные кнопки: на WebGL — игра открыта во
-        /// фрейме страницы VHR; в редакторе/не-WebGL — <c>true</c> (симуляция).
+        /// фрейме страницы VHR; в редакторе/не-WebGL — <c>true</c> (симуляция). В премиум-игре
+        /// (SDK 1.13.0+) — всегда <c>false</c>: рекламы там нет.
         /// Даже при <c>true</c> конкретный показ может вернуть <see cref="VhrAdStatus.Unavailable"/>.
         /// </summary>
         bool IsSupported { get; }
@@ -170,7 +178,15 @@ namespace VhrGames.Sdk
         }
 
         /// <inheritdoc />
-        public bool IsSupported => !VhrWebGlAdsChannel.IsSupported || VhrWebGlAdsChannel.IsHosted();
+        public bool IsSupported =>
+            !IsPremiumGame() && (!VhrWebGlAdsChannel.IsSupported || VhrWebGlAdsChannel.IsHosted());
+
+        // SDK 1.13.0: в премиум-игре (любой доступ) реклама не показывается — ни сайтом, ни игрой.
+        private bool IsPremiumGame()
+        {
+            try { return VhrAccessService.Peek(_options).IsPremium; }
+            catch { return false; }
+        }
 
         /// <inheritdoc />
         public bool IsShowing => _activeRequestId != null;
@@ -220,6 +236,16 @@ namespace VhrGames.Sdk
 
             if (_disposed)
                 return new VhrAdResult { Kind = kind, Status = VhrAdStatus.Unavailable, Reason = "disposed" };
+            if (IsPremiumGame())
+            {
+                // Без запроса к сайту и без OnAdOpened/OnAdClosed: в премиум-играх рекламы нет.
+#if UNITY_EDITOR
+                _log.Info($"Ads: {kind} — премиум-игра (симуляция доступа в окне VHR), реклама не показывается: Unavailable.");
+#else
+                _log.Verbose($"Ads: {kind} — премиум-игра, реклама не показывается: Unavailable.");
+#endif
+                return new VhrAdResult { Kind = kind, Status = VhrAdStatus.Unavailable, Reason = "premium_game" };
+            }
             if (_activeRequestId != null)
                 return new VhrAdResult { Kind = kind, Status = VhrAdStatus.Cooldown, Reason = "busy" };
 

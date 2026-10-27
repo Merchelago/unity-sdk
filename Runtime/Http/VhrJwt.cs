@@ -8,8 +8,9 @@ namespace VhrGames.Sdk
     /// SDK читает claims только для удобства: срок жизни (<c>exp</c>) — чтобы
     /// заранее попросить у хоста свежий игровой токен, и <c>gid</c>/<c>sbx</c>/<c>sub</c>
     /// песочного ключа — чтобы в Unity Editor подставить <see cref="VhrSdkOptions.GameId"/>
-    /// и показать тестового игрока. Никаких решений о доступе на этих данных не
-    /// принимается.
+    /// и показать тестового игрока. Claims доступа <c>gtp</c>/<c>acc</c>/<c>asrc</c> (SDK 1.13.0+)
+    /// — лишь подсказка <see cref="IVhrAccess.Current"/>, пока нет ответа сервера (не показывать
+    /// рекламу в премиум-игре, не начинать покупку товара в демо). Доступ решает сервер.
     /// </summary>
     internal static class VhrJwt
     {
@@ -20,6 +21,9 @@ namespace VhrGames.Sdk
             public string GameId = string.Empty;    // gid
             public string Sandbox = string.Empty;   // sbx ("1" у песочного ключа)
             public string Audience = string.Empty;  // aud (сырое значение; у массива — его содержимое)
+            public string GameType = string.Empty;  // gtp (regular|premium), SDK 1.13.0+
+            public string AccessLevel = string.Empty;  // acc (full|demo), SDK 1.13.0+
+            public string AccessSource = string.Empty; // asrc (источник доступа), SDK 1.13.0+
             public DateTimeOffset? ExpiresAt;       // exp
 
             public bool IsSandbox => Sandbox == "1" || string.Equals(Sandbox, "true", StringComparison.OrdinalIgnoreCase);
@@ -65,6 +69,9 @@ namespace VhrGames.Sdk
                 GameId = ReadClaim(json, "gid"),
                 Sandbox = ReadClaim(json, "sbx"),
                 Audience = ReadClaim(json, "aud"),
+                GameType = ReadClaim(json, "gtp"),
+                AccessLevel = ReadClaim(json, "acc"),
+                AccessSource = ReadClaim(json, "asrc"),
             };
 
             var exp = ReadClaim(json, "exp");
