@@ -1,8 +1,8 @@
 {
   "name": "ru.vhrgames.sdk",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "displayName": "VHR Games SDK",
-  "description": "Mandatory VHR Games SDK for Unity 6 WebGL titles. Provides player profile + name resolution, friends, player stats/progression, achievements, game sessions, cloud saves (server-side player progress with versioning, autosave queue and per-game quotas), economy (game catalog items, inventory, purchases confirmed by the player in the VHR platform window; no in-game top-up, spend or grant), in-game ads (interstitial/rewarded via the VHR host page, Yandex Advertising Network; never in premium games), premium games access (regular/premium, full/demo/none from the server, AccessChanged without restart, the platform purchase window for the full version; one build works in both modes), multiple leaderboards per game (created from code on the first score submit: number or time format, higher or lower is better, all-time/daily/weekly/monthly tops with player names and the player's own rank), tournaments, lobby/matchmaking + relay multiplayer, server matchmaking (UDP, domain/uuid) and session services that talk to the VHR backend, plus a build marker handshake (vhr-sdk.json) that the backend validates on upload, and Unity Editor testing of every API against the real backend with a sandbox key (VHR menu: Editor testing and Game catalog windows). One-file installer (Installer~/VhrSdkInstaller.cs) and one-click updates (VHR menu: SDK update window, daily version check, WebGL build guard against SDK versions below the platform minimum). Builds without this SDK are rejected on confirm-upload.",
+  "description": "Mandatory VHR Games SDK for Unity 6 WebGL titles. Provides player profile + name resolution, friends, player stats/progression, achievements, game sessions, cloud saves (server-side player progress with versioning, autosave queue and per-game quotas), economy (game catalog items, inventory, purchases confirmed by the player in the VHR platform window; no in-game top-up, spend or grant), in-game ads (interstitial/rewarded via the VHR host page, Yandex Advertising Network; never in premium games), premium games access (regular/premium, full/demo/none from the server, AccessChanged without restart, the platform purchase window for the full version; one build works in both modes), multiple leaderboards per game (created from code on the first score submit: number or time format, higher or lower is better, all-time/daily/weekly/monthly tops with player names and the player's own rank), tournaments, lobby/matchmaking + relay multiplayer, server matchmaking (UDP, domain/uuid) and session services that talk to the VHR backend, plus a build marker handshake (vhr-sdk.json) that the backend validates on upload, and Unity Editor testing of every API against the real backend with a sandbox key (VHR menu: Editor testing and Game catalog windows). One-file installer (Installer~/VhrSdkInstaller.cs) and one-click updates (VHR menu: SDK update window, daily version check, WebGL build guard against SDK versions below the platform minimum). AI assistants (VHR menu: AI assistant (MCP) window) - writes MCP configs for Claude Code (.mcp.json), Cursor (.cursor/mcp.json) and VS Code (.vscode/mcp.json): the VHR MCP server (docs, games, achievements, shop items, leaderboards, build updates) with a personal token taken from the VHR_MCP_TOKEN environment variable (no secrets in files) plus the public docs server; merges with existing files. Builds without this SDK are rejected on confirm-upload.",
   "unity": "6000.0",
   "documentationUrl": "https://github.com/Merchelago/unity-sdk",
   "changelogUrl": "https://github.com/Merchelago/unity-sdk/blob/main/CHANGELOG.md",
@@ -17,7 +17,8 @@
     "leaderboard",
     "premium",
     "webgl",
-    "updater"
+    "updater",
+    "mcp"
   ],
   "author": {
     "name": "VHR Games",
