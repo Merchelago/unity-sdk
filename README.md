@@ -1284,6 +1284,28 @@ Premium» во время Play присылают игре `AccessChanged`. `Ope
 
 ---
 
+## Быстрый онлайн (`VhrSdk.Relay`, SDK 1.15.0+)
+
+Релей платформы с 1.15 говорит на протоколе v2 — включается сам, старый код не меняется:
+
+```csharp
+var relay = VhrSdk.Relay;
+await relay.ConnectAsync("room1");                     // WebRTC (WebGL) поднимается в фоне
+relay.Send(snapshot, VhrChannel.Unreliable);           // часто, можно терять
+relay.Send(hit, VhrChannel.Reliable);                  // нельзя терять
+Debug.Log($"RTT {relay.Rtt:F0} мс, хост {relay.HostId}, время сервера {relay.ServerTime:F3}");
+relay.OnReconnected += resumed => { if (!resumed) RequestFullState(); };
+
+var interp = new VhrNetInterpolator<Vector3>(Vector3.LerpUnclamped); // плавное движение чужих
+byte[] delta = VhrDelta.Encode(lastAcked, state);                     // дельта снапшота
+```
+
+Отправки за кадр склеиваются в одно сообщение, при обрыве сеть восстанавливается с тем же
+`SelfId`, а `relay.Stats` показывает трафик, RTT и потери. Со старым релеем всё работает как в 1.14.
+Подробно — [Documentation~/Multiplayer.md](Documentation~/Multiplayer.md#быстрый-онлайн-протокол-релея-v2-sdk-115).
+
+---
+
 ## Публичный API кратко
 
 | Сервис | Ключевые методы |
@@ -1298,6 +1320,7 @@ Premium» во время Play присылают игре `AccessChanged`. `Ope
 | `IVhrAds` | `ShowInterstitialAsync`, `ShowRewardedAsync` (+ колбэк-версии) → `VhrAdResult { Status }` · события `OnAdOpened` / `OnAdClosed` · `AutoPause`, `IsSupported`, `IsShowing` (в премиум-игре — `Unavailable`) |
 | `IVhrSaves` | `LoadAsync` / `LoadJsonAsync<T>`, `SaveAsync` / `SaveJsonAsync<T>`, `DeleteAsync`, `ListAsync`, автосохранение `QueueSave` / `QueueSaveJson<T>` + `FlushAsync` · события `OnConflict` / `OnAutoSaveResult` · `HasPendingSaves`, `Limits` |
 | `IVhrSession` | `GameId`, `CurrentToken`, `State`, `Observable<VhrConnectionState> StateChanged` |
+| `VhrRelay` | `ConnectAsync`, `Send`/`SendTo` (+ `VhrChannel` с 1.15), `Flush`, `JoinRoomRawAsync`, `CloseAsync` · `Rtt`/`Jitter`/`PingAsync`, `ServerTime`, `HostId`/`IsHost`, `Stats`, `ProtocolVersion` · события `OnData`, `OnJoined`, `OnPeerJoined`/`OnPeerLeft`, `OnHostChanged`, `OnReconnecting`/`OnReconnected`, `OnTransportChanged`, `OnClosed` · помощники `VhrNetInterpolator<T>`, `VhrDelta` |
 | `VhrSdk` (static) | `InitializeAsync`, `Economy`, `Access`, `Ads`, `Saves`, `Leaderboard`, `Achievements`, `Tournaments`, `Connection`, `Servers`, `Session`, `ConnectionState` |
 
 Покупки **идемпотентны** через `externalId` (по умолчанию — новый GUID);

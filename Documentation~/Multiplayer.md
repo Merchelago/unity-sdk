@@ -91,14 +91,160 @@ GameObject, задайте поле **`lobbyCode`**. На `Start` он сам п
   входа в комнату **сам апгрейдится** на **WebRTC DataChannel** (UDP-подобный,
   unreliable/unordered — заметно ниже задержка, чем у WebSocket поверх TCP).
   Это **прозрачно**: тот же `Send`/`SendTo`/`OnData`, та же комната — **код
-  менять не нужно**. Сигналинг идёт по тому же соединению. Если в браузере нет
-  WebRTC или соединение не установилось за ~5 с — релей **остаётся на
-  WebSocket** (поведение как раньше). Отключить апгрейд:
+  менять не нужно**. Сигналинг идёт по тому же соединению. С 1.15 апгрейд
+  начинается **сразу вместе со входом в комнату** и идёт **в фоне**:
+  `ConnectAsync` его больше не ждёт, а транспорт переключается, когда канал
+  открылся (событие `OnTransportChanged`). Если в браузере нет WebRTC, релей
+  сообщил, что WebRTC недоступен, или канал не открылся за
+  `options.WebRtcTimeoutSeconds` (4 с) — релей **остаётся на WebSocket**
+  (поведение как раньше). Закрылся канал позже — трафик сам вернётся на
+  WebSocket. Отключить апгрейд:
   `options.PreferWebRtc = false`. Натив/редактор всегда на WebSocket. Текущий
   транспорт виден в `VhrSdk.Relay.Transport` (`"ws"` | `"webrtc"`) — для
   диагностики.
 - Релей **не авторитарный**: он только пересылает байты. Для античита/серверной
   симуляции используйте выделенный сервер (ниже).
+
+## Быстрый онлайн: протокол релея v2 (SDK 1.15)
+
+С SDK 1.15 клиент сам договаривается с релеем о протоколе v2. Ничего включать
+не нужно: старый код (`Send`/`OnData`) работает как раньше, а новое доступно,
+когда `VhrSdk.Relay.ProtocolVersion == 2`. Со старым релеем клиент остаётся на
+v1, и новые методы честно сообщают «нет данных» (см. «Совместимость»).
+
+### Пинг, RTT и серверное время
+
+```csharp
+var relay = VhrSdk.Relay;
+Debug.Log($"RTT {relay.Rtt:F0} мс (последний {relay.RttLast:F0}), джиттер {relay.Jitter:F1} мс");
+double rtt = await relay.PingAsync();          // разовый замер, мс
+relay.OnRttUpdated += ms => pingLabel.text = $"{ms:F0} мс";
+
+// Общие часы всех клиентов (секунды, Unix): ставьте в снапшоты и события.
+double now = relay.ServerTime;                 // long relay.ServerTimeUs — в микросекундах
+```
+
+- SDK пингует релей раз в `options.RelayPingIntervalSeconds` (1 с; 0 — выкл.).
+  При поднятом WebRTC пинг идёт по DataChannel — RTT и потери те же, что у
+  игровых данных.
+- `ServerTime` не идёт назад. Точность — около половины разброса RTT (обычно
+  единицы миллисекунд). `HasServerTime == false` (старый релей) — `ServerTime`
+  отдаёт локальные часы, у разных клиентов они **не совпадают**.
+
+### Надёжный и ненадёжный канал
+
+```csharp
+relay.Send(positionSnapshot, VhrChannel.Unreliable); // часто, свежее важнее
+relay.Send(hitEvent, VhrChannel.Reliable);           // нельзя потерять
+relay.SendTo(peerId, chatBytes, VhrChannel.Reliable);
+```
+
+| Канал | Транспорт | Гарантии |
+|---|---|---|
+| `Auto` (по умолчанию, `Send(bytes)`) | DataChannel, если поднят, иначе WebSocket | как до 1.15 |
+| `Reliable` | всегда WebSocket | доставка и порядок |
+| `Unreliable` | DataChannel, если поднят, иначе WebSocket | могут теряться и приходить не по порядку; у отстающего получателя релей выбрасывает старые |
+
+У получателя всё приходит в тот же `OnData`.
+
+### Пачки за кадр
+
+Все `Send` за кадр уходят **одним сообщением** в конце кадра (меньше
+накладных расходов WebSocket/TLS/WebRTC). По DataChannel пачка не больше
+~1150 байт — влезает в один UDP-пакет. Отправить немедленно — `relay.Flush()`,
+выключить — `options.RelayBatchSends = false`.
+
+### Хост комнаты
+
+```csharp
+if (relay.IsHost) SimulateBots();                 // хост — самый ранний из присутствующих
+relay.OnHostChanged += hostId => Debug.Log($"Новый хост: {hostId}");
+```
+
+Хост ушёл — релей сам назначает следующего и сообщает всем. Со старым
+релеем `HostId == 0`: выбирайте хоста сами, например наименьший id из
+`relay.SelfId` и `relay.GetPeers()`.
+
+### Восстановление после обрыва
+
+```csharp
+relay.OnReconnecting += () => ShowBanner("Связь потеряна…");
+relay.OnReconnected += resumed =>
+{
+    HideBanner();
+    if (!resumed) RequestFullState();   // новая сессия: новый SelfId, пришёл обычный OnJoined
+};
+relay.OnClosed += reason => BackToMenu(); // восстановить не удалось
+```
+
+- Обрыв сети (вкладка уснула, сменилась сеть) — релей держит ваше место
+  ~10 с. SDK переподключается с нарастающей паузой в пределах
+  `options.RelayReconnectWindowSeconds` (10 с).
+- Успели — **та же сессия**: тот же `SelfId`, остальные не видели выхода, а
+  изменения состава за это время пришли как `OnPeerJoined`/`OnPeerLeft`.
+  Надёжные сообщения за время обрыва релей доставит, ненадёжные — нет.
+  Сообщения, ушедшие в момент обрыва, могли потеряться: важное состояние
+  (счёт, HP) пересылайте снимком.
+- Не успели — новая сессия в той же комнате (`OnJoined` с новым id, затем
+  `OnReconnected(false)`). Лобби, в котором вы ждали, при этом потеряно —
+  `VhrSdk.Lobby.OnClosed("connection_lost")`.
+- Не переподключается: `CloseAsync()`/`Dispose()`, отказ релея
+  (`game_unavailable`, лимит игроков, комната полна, `slow_consumer`).
+  Выключить — `options.RelayAutoReconnect = false`.
+
+### Сетевая статистика
+
+```csharp
+var s = relay.Stats; // обновляется раз в секунду
+statsLabel.text = $"{s.Transport} v{s.ProtocolVersion} RTT {s.RttMs:F0} мс, потери {s.PingLossPercent:F0}%, " +
+                  $"↑{s.BytesSentPerSec / 1024:F1} КБ/с ↓{s.BytesReceivedPerSec / 1024:F1} КБ/с";
+```
+
+Есть ещё `MessagesSentPerSec`/`MessagesReceivedPerSec`, `TotalBytesSent`/`TotalBytesReceived`,
+`JitterMs`, `Region`, `Reconnects`.
+
+### Плавное движение: `VhrNetInterpolator<T>`
+
+Снапшоты приходят неравномерно и иногда не по порядку. Интерполятор держит
+буфер и показывает чужого игрока «чуть в прошлом», подстраивая задержку под
+интервал и разброс прихода:
+
+```csharp
+var interp = new VhrNetInterpolator<Vector3>(Vector3.LerpUnclamped);
+
+// Отправитель (например, 20 раз/с): время + позиция.
+Send(Pack(VhrSdk.Relay.ServerTime, transform.position), VhrChannel.Unreliable);
+
+// Получатель, OnData: время отправителя + время прихода в той же шкале.
+interp.Add(snap.time, snap.position, VhrSdk.Relay.ServerTime);
+
+// Update:
+if (interp.TrySampleNow(VhrSdk.Relay.ServerTime, out var p)) remote.position = p;
+```
+
+Настройки: `MinDelay`/`MaxDelay`, `JitterMultiplier`, `ExtrapolationLimit`
+(насколько «додумывать» за последним снапшотом, 0.1 с), `FixedDelay`.
+`InterpolationDelay` — текущая задержка, `Clear()` — после телепорта.
+
+### Дельта-сжатие: `VhrDelta`
+
+```csharp
+byte[] delta = VhrDelta.Encode(lastAckedState, state); // неизменные байты почти ничего не стоят
+byte[] state2 = VhrDelta.Decode(lastAckedState, delta);
+```
+
+Базу выбирает игра: последнее состояние, которое получатель точно получил
+(подтвердите его `Reliable`), или ключевой кадр раз в N тиков. Длина
+состояний может меняться. `TryDecode` — без исключения.
+
+### Совместимость
+
+- Игры на SDK 1.5–1.14 работают с новым релеем как раньше, пересобирать не нужно.
+- SDK 1.15 со старым релеем: `ProtocolVersion == 1`, `Rtt == 0`,
+  `HasServerTime == false`, `HostId == 0`, пачек и восстановления нет,
+  `PingAsync` бросает `relay_unsupported`; `Reliable` идёт по WebSocket, но
+  релей может переслать его получателю по DataChannel.
+- Вести себя ровно как 1.14: `options.RelayProtocolV2 = false`.
 
 ---
 
@@ -167,6 +313,13 @@ public sealed class MyServerGlue : MonoBehaviour
 
 > Всё внутри `VhrServerHost` null-safe: сетевые ошибки заглушаются
 > (`Debug.LogWarning`) и не валят игровой сервер.
+
+**Тик сервера (с 1.15).** В `-batchmode` Unity без ограничения кадров крутит
+цикл на 100% CPU, а контейнер сервера ограничен 1 CPU — ядро начинает
+притормаживать процесс, и у игроков растут задержки. Поэтому `VhrServerHost`
+в серверной сборке ставит `Application.targetFrameRate = 60` (поле
+**`serverFrameRate`**; 0 — не трогать), если игра не задала его сама. То же
+вручную: `VhrServerHost.ApplyServerFrameRate(30);`.
 
 ### Порт транспорта (обязательно)
 

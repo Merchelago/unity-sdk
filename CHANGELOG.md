@@ -3,6 +3,52 @@
 Все значимые изменения `ru.vhrgames.sdk` документируются здесь.
 Проект следует [Semantic Versioning](https://semver.org/). Как выпускаются версии — [RELEASING.md](RELEASING.md).
 
+## [1.15.0] - 2026-11-22
+
+### Добавлено — быстрый онлайн (протокол релея v2)
+- **Согласование протокола.** Сразу после открытия сокета `VhrRelay` шлёт `HELLO`; новый релей отвечает
+  `WELCOME`, и включается всё ниже. Старый релей `HELLO` игнорирует — клиент работает как в 1.14
+  (`VhrRelay.ProtocolVersion == 1`). Спецификация — `back/docs/relay-protocol.md`.
+- **Пинг и общие часы:** `Rtt`, `RttLast`, `Jitter` (мс), `PingAsync()`, событие `OnRttUpdated`;
+  `ServerTime` (с) / `ServerTimeUs` — время сервера, одинаковое у всех клиентов, не идёт назад.
+  Авто-пинг раз в `RelayPingIntervalSeconds` (1 с); при поднятом WebRTC — по DataChannel.
+- **Явные каналы** `VhrChannel`: `Send(bytes, VhrChannel.Reliable)` — всегда WebSocket, доставка и порядок;
+  `Unreliable` — DataChannel, если поднят (на отстающем получателе релей выбрасывает старые);
+  `Auto` — прежнее поведение `Send(bytes)`. То же для `SendTo`.
+- **Пачки за кадр:** все отправки кадра уходят одним сообщением в конце кадра (DataChannel — до 1150 байт,
+  один UDP-пакет). `Flush()` — сразу; выключить — `RelayBatchSends = false`.
+- **Хост комнаты:** `HostId`, `IsHost`, `OnHostChanged` — релей назначает нового хоста, когда старый ушёл;
+  `GetPeers()` — текущий состав.
+- **Восстановление после обрыва:** `OnReconnecting`, `OnReconnected(bool resumed)`, `IsReconnecting`.
+  Успели за `RelayReconnectWindowSeconds` (10 с) — тот же `SelfId`, изменения состава приходят как
+  `OnPeerJoined`/`OnPeerLeft`; не успели — новая сессия в той же комнате (обычный `OnJoined`). Не
+  переподключается после `CloseAsync`/`Dispose` и отказа релея. Выключить — `RelayAutoReconnect = false`.
+- **Сетевая статистика** `Stats` (`VhrRelayStats`): байты и сообщения в секунду, всего байт, RTT, джиттер,
+  потери пингов, транспорт, версия протокола, регион, число восстановлений.
+- **`VhrNetInterpolator<T>`** — буфер снапшотов с интерполяцией и адаптивной задержкой (jitter buffer),
+  принимает снапшоты не по порядку, экстраполяция с пределом.
+- **`VhrDelta`** — дельта-сжатие снапшота к базе (XOR + свёртка неизменных участков), `Encode`/`Decode`/`TryDecode`.
+- **`VhrServerHost.serverFrameRate`** (60) и `VhrServerHost.ApplyServerFrameRate(fps)`: серверная сборка
+  больше не крутит цикл без паузы на 100% CPU (под лимитом CPU контейнера это давало рывки задержки).
+  Применяется, только если игра не задала `Application.targetFrameRate` сама.
+- Опции `VhrSdkOptions`: `RelayProtocolV2`, `RelayPingIntervalSeconds`, `RelayAutoReconnect`,
+  `RelayReconnectWindowSeconds`, `RelayBatchSends`, `WebRtcTimeoutSeconds`.
+
+### Изменено
+- **WebRTC-апгрейд (WebGL) быстрее и не тормозит вход:** начинается вместе со входом в комнату, а не после
+  него, и идёт в фоне — `ConnectAsync` больше не ждёт до 5 с. Транспорт переключается, когда канал открылся
+  (`OnTransportChanged`). Ожидание — `WebRtcTimeoutSeconds` (4 с), прерывается сразу, если релей сообщил,
+  что WebRTC недоступен. Если канал закрылся позже — трафик сам возвращается на WebSocket.
+- `Send(bytes)` по WebSocket на релее v2 явно помечается надёжным — смысл тот же, что раньше.
+- Лобби (`VhrSdk.Lobby`): при восстановлении связи с новой сессией ожидавшее лобби считается потерянным —
+  `OnClosed("connection_lost")`; при возобновлённой сессии лобби сохраняется.
+
+### Совместимость
+- Публичный API только расширен. Игры на 1.5–1.14 работают с новым релеем как раньше.
+- SDK 1.15 со старым релеем: `ProtocolVersion == 1`, `Rtt == 0`, `HasServerTime == false` (`ServerTime` —
+  локальные часы), `HostId == 0`, пачек и восстановления нет, `PingAsync` бросает `relay_unsupported`.
+- Вести себя ровно как 1.14: `RelayProtocolV2 = false`.
+
 ## [1.14.0] - 2026-10-28
 
 ### Добавлено — ИИ-ассистенты (MCP)
@@ -788,6 +834,7 @@
   и типизированный `VhrApiClient`.
 - Документация (`README.md`, `Documentation~/index.md`) и `Samples~/Basic`.
 
+[1.15.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.15.0
 [1.14.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.14.0
 [1.13.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.13.0
 [1.12.0]: https://github.com/Merchelago/unity-sdk/releases/tag/v1.12.0

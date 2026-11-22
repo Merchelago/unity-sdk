@@ -400,6 +400,14 @@ claude mcp add --transport http vhr-docs https://api.vhrweb.ru/mcp/docs
 | `SimulatedItemPrices` | `null` | `itemId → цена` для Simulation (и локальный «каталог» `GetItemsAsync`) |
 | `SavesMinIntervalSeconds` | `10` | Автосохранение `IVhrSaves.QueueSave`: слот уходит не чаще раза в N секунд реального времени. Меньше 5 нельзя — `Validate()` поднимет до 5 (`MinSavesIntervalSeconds`). В `VhrSdkLifetimeScope` — поле инспектора |
 | `IsEditorSimulation` / `IsEditorLiveSandbox` | — | Только чтение, после `Validate()`: итоговый режим в Editor (в сборках `false`) |
+| `RelayBaseUrl` | `wss://servers.vhrweb.ru/ws` | Адрес релея (простой мультиплеер) |
+| `PreferWebRtc` | `true` | WebGL: апгрейд релея на WebRTC DataChannel (в фоне, с 1.15) |
+| `WebRtcTimeoutSeconds` | `4` | Сколько ждать открытия DataChannel, прежде чем остаться на WebSocket (1.15.0+) |
+| `RelayProtocolV2` | `true` | Протокол релея v2: пинг, время, каналы, пачки, хост, восстановление (1.15.0+). `false` — как 1.14 |
+| `RelayPingIntervalSeconds` | `1` | Авто-пинг релея; 0 — выкл., минимум 0.1 (1.15.0+) |
+| `RelayAutoReconnect` | `true` | Восстанавливать связь после обрыва (1.15.0+) |
+| `RelayReconnectWindowSeconds` | `10` | Сколько секунд пытаться восстановить связь (1.15.0+) |
+| `RelayBatchSends` | `true` | Склеивать отправки за кадр в одно сообщение (1.15.0+) |
 
 `Validate()` бросает `VhrSdkException("config_invalid", …)` при отсутствии
 `GameId` / базовых URL или неверном таймауте, подставляет дефолтный WebGL
@@ -897,6 +905,29 @@ API» запрашивает `GET {Games}/api/Games/{gid}/access` с песоч�
 
 **Старые сборки** (SDK < 1.13.0) в премиум-игре работают с полным доступом, если он у игрока есть, а без доступа не
 запускаются. Демо-ограничения делает только сборка с SDK 1.13.0+.
+
+### 6.11 `VhrRelay` — релей, протокол v2 (SDK 1.15.0+)
+
+Подробно и с примерами — [Multiplayer.md](Multiplayer.md#быстрый-онлайн-протокол-релея-v2-sdk-115).
+Клиент шлёт `HELLO` сразу после открытия сокета; новый релей отвечает `WELCOME`, старый молчит —
+тогда всё работает как в 1.14 (`ProtocolVersion == 1`).
+
+| API | Что делает |
+|---|---|
+| `Send(bytes, VhrChannel)` / `SendTo(peer, bytes, VhrChannel)` | `Reliable` — WebSocket, `Unreliable` — DataChannel, если поднят; `Auto` (= `Send(bytes)`) — как раньше |
+| `Flush()` | Отправить пачку кадра сейчас (`RelayBatchSends`) |
+| `Rtt`, `RttLast`, `Jitter`, `PingAsync()`, `OnRttUpdated` | Задержка до релея, мс |
+| `ServerTime` (с), `ServerTimeUs`, `HasServerTime` | Общие часы клиентов, не идут назад |
+| `HostId`, `IsHost`, `OnHostChanged`, `GetPeers()` | Хост комнаты (самый ранний), смена при уходе |
+| `OnReconnecting`, `OnReconnected(bool resumed)`, `IsReconnecting` | Восстановление после обрыва; `resumed` — тот же `SelfId` |
+| `OnTransportChanged`, `Transport` | `"webrtc"`/`"ws"`; апгрейд идёт в фоне |
+| `Stats` (`VhrRelayStats`) | Байты/сообщения в секунду, RTT, джиттер, потери пингов, транспорт, версия, регион |
+| `ProtocolVersion`, `Region` | 2 / 1 / 0 и регион релея |
+
+Помощники (чистый C#): `VhrNetInterpolator<T>` — буфер снапшотов с адаптивной задержкой
+(`Add(time, value, arrival)`, `TrySampleNow(now, out v)`), `VhrDelta` — дельта снапшота к базе
+(`Encode`/`Decode`/`TryDecode`). Для выделенного сервера — `VhrServerHost.serverFrameRate`
+(60 по умолчанию) и `VhrServerHost.ApplyServerFrameRate(fps)`.
 
 ## 7. Модель идемпотентности
 
