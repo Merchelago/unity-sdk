@@ -153,8 +153,10 @@ relay.SendTo(peerId, chatBytes, VhrChannel.Reliable);
 
 Все `Send` за кадр уходят **одним сообщением** в конце кадра (меньше
 накладных расходов WebSocket/TLS/WebRTC). По DataChannel пачка не больше
-~1150 байт — влезает в один UDP-пакет. Отправить немедленно — `relay.Flush()`,
-выключить — `options.RelayBatchSends = false`.
+~1150 байт — влезает в один UDP-пакет. Отправки вне кадра (в WebGL `OnData`
+вызывается из события сокета между кадрами, а также `FixedUpdate`) уходят
+сразу — ответ на входящее сообщение не ждёт следующего кадра. Отправить
+немедленно — `relay.Flush()`, выключить — `options.RelayBatchSends = false`.
 
 ### Хост комнаты
 

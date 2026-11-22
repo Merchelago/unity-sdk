@@ -558,7 +558,10 @@ namespace VhrGames.Sdk
         }
 
         private bool BatchingActive =>
-            _options.RelayBatchSends && _v2 && _pumpRegistered && VhrRelayPump.Available;
+            _options.RelayBatchSends && _v2 && _pumpRegistered && VhrRelayPump.Available
+            // Вне кадра (WebGL: обработчик события сокета между кадрами, FixedUpdate) — сразу,
+            // иначе ответ ждал бы конца следующего кадра.
+            && VhrRelayPump.InFrame;
 
         private void EnqueueWs(byte[] frame)
         {

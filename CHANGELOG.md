@@ -17,7 +17,8 @@
   `Unreliable` — DataChannel, если поднят (на отстающем получателе релей выбрасывает старые);
   `Auto` — прежнее поведение `Send(bytes)`. То же для `SendTo`.
 - **Пачки за кадр:** все отправки кадра уходят одним сообщением в конце кадра (DataChannel — до 1150 байт,
-  один UDP-пакет). `Flush()` — сразу; выключить — `RelayBatchSends = false`.
+  один UDP-пакет). Отправки вне кадра (WebGL-обработчик `OnData` между кадрами, `FixedUpdate`) уходят сразу,
+  без ожидания следующего кадра. `Flush()` — сразу; выключить — `RelayBatchSends = false`.
 - **Хост комнаты:** `HostId`, `IsHost`, `OnHostChanged` — релей назначает нового хоста, когда старый ушёл;
   `GetPeers()` — текущий состав.
 - **Восстановление после обрыва:** `OnReconnecting`, `OnReconnected(bool resumed)`, `IsReconnecting`.
