@@ -42,6 +42,12 @@ namespace VhrGames.Sdk
         [Tooltip("Логировать запрос/ответ SDK (по умолчанию выключено).")]
         [SerializeField] private bool verboseLogging;
 
+        [Tooltip("Ограничение кадров/с серверной сборки (тик). В -batchmode Unity без него крутит " +
+                 "цикл без паузы и съедает весь CPU контейнера (лимит 1 CPU) — планировщик начинает " +
+                 "притормаживать процесс, растут задержки. Применяется, только если игра сама не задала " +
+                 "Application.targetFrameRate. 0 — не трогать. По умолчанию 60.")]
+        [SerializeField] private int serverFrameRate = 60;
+
         /// <summary>
         /// Текущее число игроков на сервере. Обновляйте это поле из своей игровой
         /// логики (вход/выход игрока). Если задан <see cref="PlayerCountProvider"/>,
@@ -67,6 +73,8 @@ namespace VhrGames.Sdk
             // В клиентских / редакторных сборках компонент — безопасный no-op.
             if (!VhrServer.IsServerBuild)
                 return;
+
+            ApplyServerFrameRate(serverFrameRate);
 
             try
             {
@@ -98,6 +106,22 @@ namespace VhrGames.Sdk
 
             _cts = new CancellationTokenSource();
             _ = ReportLoopAsync(_cts.Token);
+        }
+
+        /// <summary>
+        /// Ограничивает кадры/с серверной сборки, если игра не задала свой
+        /// <see cref="Application.targetFrameRate"/>: в <c>-batchmode</c> без ограничения Unity
+        /// гоняет цикл на 100% CPU, и под лимитом CPU контейнера ядро Linux (CFS) замораживает
+        /// процесс до конца периода — это рывки задержки для всех игроков.
+        /// </summary>
+        /// <param name="fps">Кадров в секунду (тик сервера); 0 или меньше — не трогать.</param>
+        public static void ApplyServerFrameRate(int fps)
+        {
+            if (fps <= 0) return;
+            if (Application.targetFrameRate > 0) return; // игра решила сама
+            QualitySettings.vSyncCount = 0;
+            Application.targetFrameRate = fps;
+            Debug.Log($"[VHR] VhrServerHost: Application.targetFrameRate = {fps} (серверный тик).");
         }
 
         private async Task ReportLoopAsync(CancellationToken ct)
