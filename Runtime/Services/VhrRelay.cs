@@ -50,6 +50,11 @@ namespace VhrGames.Sdk
     {
         // Неподтверждённый пинг считается потерянным через столько микросекунд.
         private const long PingLostAfterUs = 3_000_000;
+        // Релей молчит: столько пингов подряд без ответа и столько микросекунд с первого из них —
+        // соединение считается потерянным (см. CheckLiveness).
+        private const int LivenessPings = 3;
+        private const long LivenessTimeoutUs = 5_000_000;
+        private const string WebRtcStopSignal = "{\"t\":\"webrtc-stop\"}";
         // Предел одного сообщения пачки: WS — с запасом под лимит релея, DC — один UDP-пакет.
         private const int WsBatchBytes = 32 * 1024;
         private const int DcBatchBytes = 1150;
@@ -107,6 +112,16 @@ namespace VhrGames.Sdk
             new Dictionary<uint, TaskCompletionSource<double>>();
         private uint _pingSeq;
         private long _lastPingUs;
+
+        // ---- живость соединения (пинги без ответа) ----
+        private int _pingsSinceRecv;        // пингов отправлено с последнего входящего кадра (любого)
+        private long _firstPingSinceRecvUs;
+        private int _pingsSincePong;        // пингов отправлено с последнего PONG
+        private long _firstPingSincePongUs;
+        private long _lastTickUs;
+        // Сокет, признанный мёртвым по тишине. Закрывается только ПОСЛЕ восстановления:
+        // см. CheckLiveness.
+        private IVhrSocket _staleSocket;
 
         private struct PingSlot
         {
@@ -214,6 +229,7 @@ namespace VhrGames.Sdk
         /// <summary>
         /// Соединение закрылось. Аргумент — причина (может быть <c>null</c>). При
         /// обрыве с включённым восстановлением срабатывает только если восстановить не удалось.
+        /// Причина <c>"timeout"</c> — релей перестал отвечать (сеть пропала без закрытия сокета).
         /// </summary>
         public event Action<string> OnClosed;
 
@@ -310,6 +326,7 @@ namespace VhrGames.Sdk
             // отцепляем и закрываем. Иначе он остаётся подписанным, и его поздний onclose
             // обнулит SelfId и уронит ожидания уже НОВОГО соединения (и лобби вместе с ним).
             DetachSocket();
+            DisposeStaleSocket();
 
             SelfId = 0;
             ResetProtocolState(clearResume: true);
@@ -460,6 +477,7 @@ namespace VhrGames.Sdk
             _sessionGen++;
             _reconnecting = false;
             try { FlushBatches(); } catch { /* ignore */ }
+            DisposeStaleSocket();
             var sock = _socket;
             if (sock == null) return;
             try { await sock.CloseAsync(); }
@@ -548,6 +566,13 @@ namespace VhrGames.Sdk
             Interlocked.Exchange(ref _hostId, 0);
             if (clearResume) _resumeToken = null;
             _welcomeTcs = null;
+            ResetLiveness();
+        }
+
+        private void ResetLiveness()
+        {
+            Interlocked.Exchange(ref _pingsSinceRecv, 0);
+            Interlocked.Exchange(ref _pingsSincePong, 0);
         }
 
         private void EnsurePump()
@@ -632,6 +657,7 @@ namespace VhrGames.Sdk
             if (msg == null || msg.Length < 1) return;
             Interlocked.Add(ref _bytesIn, msg.Length);
             Interlocked.Increment(ref _msgsIn);
+            Interlocked.Exchange(ref _pingsSinceRecv, 0); // релей на связи
             HandleFrame(msg);
         }
 
@@ -645,6 +671,7 @@ namespace VhrGames.Sdk
             if (msg == null || msg.Length < 1) return;
             Interlocked.Add(ref _bytesIn, msg.Length);
             Interlocked.Increment(ref _msgsIn);
+            Interlocked.Exchange(ref _pingsSinceRecv, 0); // релей на связи
             HandleFrame(msg);
         }
 
@@ -905,6 +932,7 @@ namespace VhrGames.Sdk
                 if (gen != _sessionGen || _userClosed) return;
                 _reconnecting = false;
                 _reconnects++;
+                DisposeStaleSocket();
                 Debug.Log($"[VHR Relay] связь восстановлена ({(resumed ? "сессия возобновлена" : "новая сессия")}), self={SelfId}");
                 try { OnReconnected?.Invoke(resumed); } catch { /* игра */ }
                 BeginWebRtcUpgrade();
@@ -914,6 +942,7 @@ namespace VhrGames.Sdk
             if (gen != _sessionGen || _userClosed) return;
             _reconnecting = false;
             DetachSocket();
+            DisposeStaleSocket();
             SelfId = 0;
             Interlocked.Exchange(ref _hostId, 0);
             _peers.Clear();
@@ -994,6 +1023,8 @@ namespace VhrGames.Sdk
                 if (manual != null) _manualPings[seq] = manual;
             }
             _lastPingUs = t0;
+            if (Interlocked.Increment(ref _pingsSinceRecv) == 1) Volatile.Write(ref _firstPingSinceRecvUs, t0);
+            if (Interlocked.Increment(ref _pingsSincePong) == 1) Volatile.Write(ref _firstPingSincePongUs, t0);
             var frame = P.BuildPing(seq, t0);
             // По DataChannel, если он поднят: RTT и потери — те же, что у игровых данных.
             var rtc = _webRtc;
@@ -1010,6 +1041,7 @@ namespace VhrGames.Sdk
                 ref var slot = ref _pings[seq % (uint)_pings.Length];
                 if (slot.Seq != seq || slot.State == 2) return; // чужой/повтор
                 slot.State = 2;
+                Interlocked.Exchange(ref _pingsSincePong, 0);
                 if (_manualPings.TryGetValue(seq, out manual)) _manualPings.Remove(seq);
             }
             long rttUs = _clock.AddSample(t0, t1, serverUs);
@@ -1055,6 +1087,7 @@ namespace VhrGames.Sdk
             if (_webRtcActive && (rtc == null || !rtc.IsOpen))
             {
                 DisposeRtc();
+                SendSignal(WebRtcStopSignal); // релею: ICE-порт можно отдать другому игроку
                 Debug.Log("[VHR Relay] WebRTC DataChannel закрылся → транспорт WS");
                 RaiseTransportChanged();
             }
@@ -1063,11 +1096,75 @@ namespace VhrGames.Sdk
 
             long now = VhrClockSync.LocalNowUs();
             float interval = _options.RelayPingIntervalSeconds;
+            if (CheckLiveness(now, interval)) return;
             if (_v2 && (_caps & P.CapPing) != 0 && interval > 0f && IsConnected && !_reconnecting
                 && now - _lastPingUs >= (long)(interval * 1_000_000))
                 SendPing(null);
             ExpirePings(now);
             UpdateStats(now);
+        }
+
+        /// <summary>
+        /// Сеть может пропасть без закрытия сокета (смена сети на телефоне, сон ноутбука,
+        /// роутер): браузер узнаёт об этом через минуты, а до тех пор сокет «открыт» и
+        /// игра просто замирает (на стенде — 45 с, пока релей сам не разорвал соединение).
+        /// Поэтому соединение проверяется пингами: <see cref="LivenessPings"/> пингов
+        /// подряд без единого входящего кадра за <see cref="LivenessTimeoutUs"/> — сокет
+        /// закрывается и запускается обычное восстановление (релей отдаёт ту же сессию
+        /// новому сокету). Если кадры по WebSocket идут, а ответов на пинги по DataChannel
+        /// нет — умер только DataChannel: возвращаемся на WebSocket.
+        /// Нужен релей v2 и <see cref="VhrSdkOptions.RelayPingIntervalSeconds"/> &gt; 0.
+        /// </summary>
+        /// <returns><c>true</c> — соединение признано потерянным, кадр для него закончен.</returns>
+        private bool CheckLiveness(long now, float interval)
+        {
+            // Кадры не шли (вкладка была скрыта, игра стояла на паузе) — пинги не
+            // отправлялись, судить не о чём: отсчёт заново.
+            long lastTick = _lastTickUs;
+            _lastTickUs = now;
+            if (lastTick == 0 || now - lastTick > 1_000_000) { ResetLiveness(); return false; }
+            if (!_v2 || (_caps & P.CapPing) == 0 || !(interval > 0f) || !IsConnected || _reconnecting) return false;
+
+            if (Volatile.Read(ref _pingsSinceRecv) >= LivenessPings
+                && now - Volatile.Read(ref _firstPingSinceRecvUs) > LivenessTimeoutUs)
+            {
+                Debug.Log("[VHR Relay] релей не отвечает " + (LivenessTimeoutUs / 1_000_000) + " с → соединение потеряно");
+                ResetLiveness();
+                // Старый сокет отцепляем, но пока НЕ закрываем: закрытие шлёт close-кадр, и если
+                // он всё же дойдёт (связь жива в одну сторону, релей был занят), релей сочтёт это
+                // обычным выходом — уберёт игрока из комнаты, и вернуться в ту же сессию станет
+                // нельзя. Закрываем после восстановления: к тому времени релей уже передал
+                // сессию новому сокету.
+                DisposeRtc();
+                lock (_batchLock)
+                {
+                    _wsBatch.Clear();
+                    _dcBatch.Clear();
+                }
+                var sock = _socket;
+                _socket = null;
+                if (sock != null)
+                {
+                    sock.OnMessage -= HandleWsMessage;
+                    sock.OnClose -= HandleCloseRaw;
+                    DisposeStaleSocket();
+                    _staleSocket = sock;
+                }
+                HandleCloseRaw("timeout"); // дальше — как при обычном обрыве: резюм или OnClosed
+                if (!_reconnecting) DisposeStaleSocket();
+                return true;
+            }
+
+            if (_webRtcActive && Volatile.Read(ref _pingsSincePong) >= LivenessPings
+                && now - Volatile.Read(ref _firstPingSincePongUs) > LivenessTimeoutUs)
+            {
+                Interlocked.Exchange(ref _pingsSincePong, 0);
+                DisposeRtc();
+                SendSignal(WebRtcStopSignal);
+                Debug.Log("[VHR Relay] WebRTC DataChannel не отвечает → транспорт WS");
+                RaiseTransportChanged();
+            }
+            return false;
         }
 
         private void UpdateStats(long nowUs)
@@ -1129,7 +1226,8 @@ namespace VhrGames.Sdk
                 rtc.OnData += OnDataChannelMessage;
 
                 float timeout = _options.WebRtcTimeoutSeconds > 0f ? _options.WebRtcTimeoutSeconds : 4f;
-                // Peer заводится синхронно внутри StartAsync — offer релея будет куда принять.
+                // RTCPeerConnection создаётся при первом offer (WebGLWebRtc.SetOffer): его создание
+                // занимает главный поток ~1 с и раньше задерживало обработку ответа на вход.
                 var openTask = rtc.StartAsync(TimeSpan.FromSeconds(timeout));
                 SendSignal("{\"t\":\"webrtc-start\"}");
                 bool ok = await openTask;
@@ -1150,6 +1248,9 @@ namespace VhrGames.Sdk
                 {
                     _webRtc = null;
                     try { rtc.Dispose(); } catch { /* ignore */ }
+                    // Релей держит под нас ICE-порт (их мало) — сообщаем, что он не нужен.
+                    // Старый релей это сообщение игнорирует.
+                    SendSignal(WebRtcStopSignal);
                     Debug.Log("[VHR Relay] WebRTC не поднялся → остаёмся на WS");
                 }
             }
@@ -1158,6 +1259,7 @@ namespace VhrGames.Sdk
                 // Любой сбой -> тихо остаёмся на WebSocket.
                 if (_webRtc == rtc) { _webRtcActive = false; _webRtc = null; }
                 try { rtc?.Dispose(); } catch { /* ignore */ }
+                try { if (_socket == sock) SendSignal(WebRtcStopSignal); } catch { /* ignore */ }
             }
         }
 
@@ -1355,6 +1457,15 @@ namespace VhrGames.Sdk
             try { VhrRelayPump.Unregister(this); } catch { /* ignore */ }
             _pumpRegistered = false;
             DetachSocket();
+            DisposeStaleSocket();
+        }
+
+        private void DisposeStaleSocket()
+        {
+            var s = _staleSocket;
+            _staleSocket = null;
+            if (s == null) return;
+            try { s.Dispose(); } catch { /* ignore */ }
         }
 
         /// <summary>Отцепляет и закрывает текущие сокет и WebRTC-канал (без события <see cref="OnClosed"/>).</summary>

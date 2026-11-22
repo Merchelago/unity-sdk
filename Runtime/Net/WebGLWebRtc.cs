@@ -106,37 +106,39 @@ namespace VhrGames.Sdk
 
         private int _id;
         private bool _disposed;
+        private bool _started;
+        private bool _peerFailed;
         private TaskCompletionSource<bool> _openTcs;
 
         /// <summary>Открыт ли DataChannel (готов к игровому трафику).</summary>
         public bool IsOpen => _id != 0 && VhrRtc_IsOpen(_id) == 1;
 
         /// <summary>
-        /// Заводит <c>RTCPeerConnection</c> и ждёт открытия DataChannel или сбоя/
-        /// таймаута. Сразу после старта вызывающий должен слать релею
-        /// <c>{"t":"webrtc-start"}</c>; на пришедший offer вызвать
+        /// Ждёт открытия DataChannel или сбоя/таймаута. Сразу после старта вызывающий
+        /// должен слать релею <c>{"t":"webrtc-start"}</c>; на пришедший offer вызвать
         /// <see cref="SetOffer"/>, на ICE — <see cref="AddRemoteIce"/>; локальные
         /// answer/ICE придут через <see cref="OnLocalAnswer"/>/<see cref="OnLocalIce"/>.
+        /// <para>
+        /// Сам <c>RTCPeerConnection</c> создаётся не здесь, а при первом offer
+        /// (<see cref="SetOffer"/>): первый <c>new RTCPeerConnection()</c> на странице
+        /// занимает главный поток браузера примерно на секунду (замер в Chrome 158 —
+        /// 0,8–1,0 с). До 1.15.1 он создавался сразу после открытия сокета, и ответ
+        /// релея на вход (<c>0x81</c>) ждал эту секунду — <c>ConnectAsync</c> был на
+        /// секунду дольше. А если релей отвечает <c>webrtc-unavailable</c> (нет
+        /// свободного порта, WebRTC выключен), peer не создаётся вовсе.
+        /// </para>
         /// </summary>
         /// <param name="timeout">Дедлайн на открытие канала (после — fallback на WS).</param>
         /// <param name="ct">Токен отмены.</param>
         /// <returns><c>true</c>, если DataChannel открылся; иначе <c>false</c>.</returns>
         public async Task<bool> StartAsync(TimeSpan timeout, CancellationToken ct = default)
         {
-            if (_id != 0)
+            if (_started)
                 return IsOpen;
+            _started = true;
 
             var openTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             _openTcs = openTcs;
-
-            _id = VhrRtc_Start(s_onOpen, s_onData, s_onAnswer, s_onIce, s_onError);
-            if (_id == 0)
-            {
-                // WebRTC недоступен в этом браузере — сразу fallback.
-                return false;
-            }
-
-            Instances[_id] = this;
 
             // Таймаут — по кадрам (VhrAsync), а не CancelAfter: на WebGL нет таймерного
             // потока, CancelAfter не срабатывает, и без открытия канала StartAsync (а с ним
@@ -163,8 +165,28 @@ namespace VhrGames.Sdk
         /// <summary>Скармливает релейный offer SDP (из <c>0x10</c> <c>{"t":"offer"}</c>).</summary>
         public void SetOffer(string sdp)
         {
-            if (_id == 0 || string.IsNullOrEmpty(sdp)) return;
+            if (_disposed || string.IsNullOrEmpty(sdp)) return;
+            if (!EnsurePeer()) return;
             VhrRtc_SetOffer(_id, sdp);
+        }
+
+        /// <summary>
+        /// Создаёт <c>RTCPeerConnection</c> при первом offer. Нет WebRTC в браузере —
+        /// ожидание в <see cref="StartAsync"/> сразу завершается отказом (fallback на WS).
+        /// </summary>
+        private bool EnsurePeer()
+        {
+            if (_id != 0) return true;
+            if (!_started || _peerFailed) return false;
+            _id = VhrRtc_Start(s_onOpen, s_onData, s_onAnswer, s_onIce, s_onError);
+            if (_id == 0)
+            {
+                _peerFailed = true;
+                _openTcs?.TrySetResult(false);
+                return false;
+            }
+            Instances[_id] = this;
+            return true;
         }
 
         /// <summary>Добавляет удалённый ICE-кандидат (JSON из <c>0x10</c> <c>{"t":"ice"}</c>).</summary>

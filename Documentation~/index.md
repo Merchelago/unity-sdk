@@ -919,7 +919,7 @@ API» запрашивает `GET {Games}/api/Games/{gid}/access` с песоч�
 | `Rtt`, `RttLast`, `Jitter`, `PingAsync()`, `OnRttUpdated` | Задержка до релея, мс |
 | `ServerTime` (с), `ServerTimeUs`, `HasServerTime` | Общие часы клиентов, не идут назад |
 | `HostId`, `IsHost`, `OnHostChanged`, `GetPeers()` | Хост комнаты (самый ранний), смена при уходе |
-| `OnReconnecting`, `OnReconnected(bool resumed)`, `IsReconnecting` | Восстановление после обрыва; `resumed` — тот же `SelfId` |
+| `OnReconnecting`, `OnReconnected(bool resumed)`, `IsReconnecting` | Восстановление после обрыва; `resumed` — тот же `SelfId`. С 1.15.1 обрывом считается и молчание релея: 3 пинга подряд без ответа за 5 с (нужен `RelayPingIntervalSeconds > 0`); не восстановилось — `OnClosed("timeout")` |
 | `OnTransportChanged`, `Transport` | `"webrtc"`/`"ws"`; апгрейд идёт в фоне |
 | `Stats` (`VhrRelayStats`) | Байты/сообщения в секунду, RTT, джиттер, потери пингов, транспорт, версия, регион |
 | `ProtocolVersion`, `Region` | 2 / 1 / 0 и регион релея |
