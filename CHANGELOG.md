@@ -11,7 +11,8 @@
   (`VhrRelay.ProtocolVersion == 1`). Спецификация — `back/docs/relay-protocol.md`.
 - **Пинг и общие часы:** `Rtt`, `RttLast`, `Jitter` (мс), `PingAsync()`, событие `OnRttUpdated`;
   `ServerTime` (с) / `ServerTimeUs` — время сервера, одинаковое у всех клиентов, не идёт назад.
-  Авто-пинг раз в `RelayPingIntervalSeconds` (1 с); при поднятом WebRTC — по DataChannel.
+  Авто-пинг раз в `RelayPingIntervalSeconds` (1 с); при поднятом WebRTC — по DataChannel, ответ — тем путём,
+  каким релей шлёт вам игровые данные (с релея 2026-11 — WebSocket: так быстрее на стороне сервера).
 - **Явные каналы** `VhrChannel`: `Send(bytes, VhrChannel.Reliable)` — всегда WebSocket, доставка и порядок;
   `Unreliable` — DataChannel, если поднят (на отстающем получателе релей выбрасывает старые);
   `Auto` — прежнее поведение `Send(bytes)`. То же для `SendTo`.
