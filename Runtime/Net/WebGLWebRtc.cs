@@ -181,6 +181,15 @@ namespace VhrGames.Sdk
             VhrRtc_Send(_id, data, data.Length);
         }
 
+        /// <summary>
+        /// Прерывает ожидание открытия канала: <see cref="StartAsync"/> сразу вернёт
+        /// <c>false</c> (релей сообщил, что WebRTC недоступен). Peer закрывает <see cref="Dispose"/>.
+        /// </summary>
+        public void Abort()
+        {
+            _openTcs?.TrySetResult(false);
+        }
+
         public void Dispose()
         {
             if (_disposed) return;
@@ -266,6 +275,7 @@ namespace VhrGames.Sdk
         public void SetOffer(string sdp) { }
         public void AddRemoteIce(string candidateJson) { }
         public void Send(byte[] data) { }
+        public void Abort() { }
         public void Dispose() { }
 #endif
     }

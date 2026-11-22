@@ -290,6 +290,7 @@ namespace VhrGames.Sdk
             {
                 _relay.OnControlFrame += HandleControlFrame;
                 _relay.OnClosed += HandleRelayClosed;
+                _relay.OnReconnected += HandleRelayReconnected;
                 _subscribed = true;
             }
 
@@ -405,6 +406,27 @@ namespace VhrGames.Sdk
             _lobbyTcs?.TrySetException(ex);
             _startTcs?.TrySetException(ex);
             try { OnClosed?.Invoke(reason); } catch { /* подписчик */ }
+        }
+
+        /// <summary>
+        /// Релей v2 восстановил связь. Сессия возобновлена — релей сохранил и личность
+        /// (auth), и место в лобби: ничего делать не нужно. Новая сессия — сервер нас не
+        /// помнит: следующий запрос заново отправит auth, а лобби, в котором мы ждали,
+        /// потеряно — сообщаем об этом так же, как при обрыве (только если лобби было).
+        /// </summary>
+        private void HandleRelayReconnected(bool resumed)
+        {
+            if (resumed) return;
+            _authSent = false;
+            bool hadLobby = CurrentLobby != null;
+            CurrentLobby = null;
+            var ex = new VhrSdkException("relay_closed", "Связь с релеем переустановлена — лобби потеряно.");
+            bool hadPending = (_lobbyTcs != null && _lobbyTcs.TrySetException(ex))
+                              | (_startTcs != null && _startTcs.TrySetException(ex));
+            if (hadLobby || hadPending)
+            {
+                try { OnClosed?.Invoke("connection_lost"); } catch { /* подписчик */ }
+            }
         }
 
         // ---- разбор входящих 0x20-событий (на главном потоке от VhrRelay.Post) ----
@@ -533,6 +555,7 @@ namespace VhrGames.Sdk
             {
                 _relay.OnControlFrame -= HandleControlFrame;
                 _relay.OnClosed -= HandleRelayClosed;
+                _relay.OnReconnected -= HandleRelayReconnected;
                 _subscribed = false;
             }
             _startTcs?.TrySetCanceled();

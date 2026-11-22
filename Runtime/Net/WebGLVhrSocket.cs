@@ -156,7 +156,8 @@ namespace VhrGames.Sdk
             }
 
             if (payload == null) return;
-            if (payload[0] != 0x83) // не спамим высокочастотными игровыми data-кадрами (0x83 ~15Гц)
+            // Не спамим высокочастотными кадрами: игровые данные 0x83, пачки 0xC6, ответы на пинг 0xB1.
+            if (payload[0] != 0x83 && payload[0] != 0xC6 && payload[0] != 0xB1)
                 UnityEngine.Debug.Log("[VHR WS] msg len=" + payload.Length + " type=0x" + payload[0].ToString("X2"));
             if (!Instances.TryGetValue(id, out var self)) return;
             try { self.OnMessage?.Invoke(payload); } catch { /* обработчик игры */ }

@@ -80,6 +80,46 @@ namespace VhrGames.Sdk
         public bool PreferWebRtc = true;
 
         /// <summary>
+        /// Сколько секунд ждать открытия WebRTC DataChannel, прежде чем остаться на
+        /// WebSocket. По умолчанию 4. С 1.15 апгрейд идёт в фоне и не задерживает
+        /// <c>ConnectAsync</c>; если релей сразу сообщил, что WebRTC недоступен, ожидание
+        /// прерывается раньше.
+        /// </summary>
+        public float WebRtcTimeoutSeconds = 4f;
+
+        /// <summary>
+        /// Протокол релея v2 (SDK 1.15): пинг и серверное время, явные каналы
+        /// (<see cref="VhrChannel"/>), пачки за кадр, хост комнаты, восстановление после
+        /// обрыва. Со старым релеем клиент сам остаётся на v1. По умолчанию <c>true</c>;
+        /// <c>false</c> — вести себя ровно как SDK 1.14.
+        /// </summary>
+        public bool RelayProtocolV2 = true;
+
+        /// <summary>
+        /// Интервал авто-пинга релея, секунды (RTT, джиттер, потери, синхронизация часов).
+        /// 0 — не пинговать (останется <see cref="VhrRelay.PingAsync"/>). По умолчанию 1.
+        /// Пинг — 13 байт, по DataChannel, если он поднят.
+        /// </summary>
+        public float RelayPingIntervalSeconds = 1f;
+
+        /// <summary>
+        /// Восстанавливать соединение с релеем после обрыва (релей v2): тот же peer-id и
+        /// место в комнате, если успели за <see cref="RelayReconnectWindowSeconds"/>.
+        /// По умолчанию <c>true</c>.
+        /// </summary>
+        public bool RelayAutoReconnect = true;
+
+        /// <summary>Сколько секунд пытаться восстановить соединение. По умолчанию 10 (как держит слот релей).</summary>
+        public float RelayReconnectWindowSeconds = 10f;
+
+        /// <summary>
+        /// Склеивать отправки за кадр в одно сообщение (релей v2): меньше накладных расходов
+        /// на WebSocket/TLS/SCTP. Пачка уходит в конце кадра (или по <see cref="VhrRelay.Flush"/>).
+        /// По умолчанию <c>true</c>.
+        /// </summary>
+        public bool RelayBatchSends = true;
+
+        /// <summary>
         /// The VHR game id this build belongs to. Required. Sent as the
         /// <c>X-Vhr-Game-Id</c> header and used in server-binding calls.
         /// </summary>
@@ -274,6 +314,11 @@ namespace VhrGames.Sdk
             if (string.IsNullOrWhiteSpace(RelayBaseUrl))
                 RelayBaseUrl = "wss://servers.vhrweb.ru/ws";
             RelayBaseUrl = RelayBaseUrl.Trim();
+
+            if (!(WebRtcTimeoutSeconds > 0f)) WebRtcTimeoutSeconds = 4f;
+            if (!(RelayPingIntervalSeconds >= 0f)) RelayPingIntervalSeconds = 1f;
+            else if (RelayPingIntervalSeconds > 0f && RelayPingIntervalSeconds < 0.1f) RelayPingIntervalSeconds = 0.1f;
+            if (!(RelayReconnectWindowSeconds > 0f)) RelayReconnectWindowSeconds = 10f;
         }
 
         /// <summary>
